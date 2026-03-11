@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	templateZipURL    = "https://github.com/micoya/gocraft-template/-/archive/master/gocraft-template-master.zip"
+	templateZipURL    = "https://github.com/micoya/gocraft-template/archive/refs/heads/master.zip"
 	templateModPath   = "github.com/micoya/gocraft-template"
 	templateName      = "gocraft-template"
 	templateDirPrefix = "gocraft-template-master"
