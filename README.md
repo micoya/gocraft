@@ -9,7 +9,7 @@
 ## Bootstrap
 
 ```bash
-go install github.com/micoya/gocraft/cmd/gocraft@v0.1.5
+go install github.com/micoya/gocraft/cmd/gocraft@v0.1.6
 
 gocraft new <my-project>
 ```
