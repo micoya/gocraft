@@ -1,0 +1,193 @@
+# ============================================================
+# 应用基础配置
+# ============================================================
+
+# 应用名称，用于日志、链路追踪等标识。默认：my_app
+name: my_app
+
+# 运行环境。常用值：local / dev / staging / production。默认：local
+env: local
+
+# ============================================================
+# 日志配置
+# ============================================================
+log:
+  # 日志级别。可选：DEBUG / INFO / WARN / ERROR。默认：INFO
+  level: INFO
+
+  # 输出格式。可选：text（人类可读）/ json（结构化，适合日志采集）。默认：text
+  format: text
+
+  # 输出目标。填 stdout 输出到标准输出，或填绝对文件路径写入文件。默认：stdout
+  path: stdout
+
+  # 是否在日志中附带调用栈 trace。默认：true
+  with_trace: true
+
+  # 是否在日志中附带调用栈 source。默认：true
+  add_source: true
+
+# ============================================================
+# HTTP 服务配置
+# ============================================================
+http_server:
+  # 监听地址。格式：[host]:port。默认：:8080
+  addr: ":8080"
+
+  # 收到关闭信号后等待在途请求完成的最长时间。默认：30s
+  shutdown_timeout: 30s
+
+  # 读取完整请求（含 body）的超时。默认：30s
+  read_timeout: 30s
+
+  # 写入完整响应的超时。默认：30s
+  write_timeout: 30s
+
+  # Keep-Alive 连接空闲超时。默认：60s
+  idle_timeout: 60s
+
+  # 健康检查端点路径。默认：/healthz
+  health_path: /healthz
+
+  # Prometheus metrics 端点路径。默认：/metrics
+  metrics_path: /metrics
+
+  # CORS 跨域配置。整个 cors 块不填（或注释掉）表示不启用 CORS 中间件。
+  # cors:
+  #   # 是否允许所有来源（会忽略 allow_origins）。生产环境不建议开启。
+  #   allow_all_origins: false
+  #
+  #   # 允许的来源列表（allow_all_origins 为 false 时生效）
+  #   allow_origins:
+  #     - https://example.com
+  #     - https://app.example.com
+  #
+  #   # 允许的 HTTP 方法
+  #   allow_methods:
+  #     - GET
+  #     - POST
+  #     - PUT
+  #     - DELETE
+  #
+  #   # 允许的请求头
+  #   allow_headers:
+  #     - Authorization
+  #     - Content-Type
+  #
+  #   # 是否允许携带 Cookie / 认证信息
+  #   allow_credentials: false
+  #
+  #   # 预检请求（OPTIONS）结果缓存时长
+  #   max_age: 12h
+
+  # pprof 性能分析配置。默认开启，仅允许本地访问。
+  pprof:
+    # 是否启用 pprof 端点（/debug/pprof/）。默认：true
+    enabled: true
+
+    # 是否允许非本地 IP 访问 pprof。生产环境建议保持 false。默认：false
+    allow_external: false
+
+    # 访问 pprof 时需要携带的 Authorization 头。为空则不鉴权。默认：""
+    # authorization_token: "Bearer my-secret-token"
+
+  # 访问日志配置。默认开启。
+  access_log:
+    # 是否启用访问日志。默认：true
+    enabled: true
+
+    # 输出格式。可选：text / json。默认跟随 log.format。
+    format: text
+
+# ============================================================
+# OpenTelemetry 可观测性配置
+# 整个 otel 块不填（或注释掉）表示不启用 OTel。
+# 存在 otel 块时：自动启用 Prometheus metrics 端点和 HTTP trace 中间件。
+# ============================================================
+# otel:
+#   trace:
+#     # OTLP gRPC Collector 地址。为空则不通过 OTLP 导出 trace。
+#     endpoint: "otel-collector:4317"
+#     # 是否使用非 TLS 连接（开发环境可开启）。默认：false
+#     insecure: true
+#     # 采样率 0.0~1.0。1.0=全量采样，0.0=不采样。默认：1.0
+#     sample_rate: 1.0
+#
+#   metric:
+#     # OTLP gRPC 推送地址。为空则仅通过 Prometheus 端点暴露指标。
+#     endpoint: "otel-collector:4317"
+#     # 是否使用非 TLS 连接。默认：false
+#     insecure: true
+
+# ============================================================
+# 数据访问层（DAO）配置
+# database / redis / oss / openai 均支持多实例，key 为自定义连接名称。
+# 各 Must() 函数省略 name 参数时默认取名为 "default" 的实例。
+# 整个 dao 块不填（或注释掉）表示不使用任何数据源。
+# ============================================================
+# dao:
+#   database:
+#     # 默认库（gormx.Must(dao) 即取此实例）
+#     default:
+#       driver: mysql
+#       # Go MySQL DSN 格式：user:pass@tcp(host:port)/dbname?parseTime=true
+#       dsn: "root:password@tcp(127.0.0.1:3306)/mydb?charset=utf8mb4&parseTime=true"
+#     # 从库（按需添加，gormx.Must(dao, "replica") 取用）
+#     replica:
+#       driver: mysql
+#       dsn: "root:password@tcp(127.0.0.1:3307)/mydb?charset=utf8mb4&parseTime=true"
+#     # PostgreSQL 实例
+#     analytics:
+#       driver: postgres
+#       # Go pgx DSN 格式
+#       dsn: "host=127.0.0.1 port=5432 user=postgres password=password dbname=mydb sslmode=disable"
+#
+#   redis:
+#     # 默认实例（redisx.Must(dao) 即取此实例）
+#     default:
+#       addr: "127.0.0.1:6379"
+#       password: ""
+#       # 使用的数据库编号（0-15）
+#       db: 0
+#       read_timeout: 3s
+#       write_timeout: 3s
+#     # 分布式锁专用实例（redisx.Must(dao, "lock") 取用）
+#     lock:
+#       addr: "127.0.0.1:6379"
+#       password: ""
+#       db: 1
+#       read_timeout: 3s
+#       write_timeout: 3s
+#
+#   oss:
+#     # 默认 OSS 实例（ossx.Must(dao) 即取此实例）
+#     default:
+#       # OSS 服务端点，格式：https://oss-{region}.aliyuncs.com
+#       endpoint: "https://oss-cn-hangzhou.aliyuncs.com"
+#       access_key_id: "your-access-key-id"
+#       access_key_secret: "your-access-key-secret"
+#     # 额外 Bucket 所在地域的实例（按需添加）
+#     # backup:
+#     #   endpoint: "https://oss-cn-beijing.aliyuncs.com"
+#     #   access_key_id: "your-access-key-id"
+#     #   access_key_secret: "your-access-key-secret"
+#
+#   openai:
+#     # 默认 OpenAI 实例（openaix.Must(dao) 即取此实例）
+#     default:
+#       api_key: "sk-xxxxxxxxxxxxxxxxxxxx"
+#       # base_url 可选。为空时使用官方地址 https://api.openai.com/v1。
+#       # 填写后可接入任意 OpenAI 兼容服务（代理、DeepSeek、通义千问等）。
+#       # base_url: "https://your-proxy.example.com/v1"
+#     # 备用模型服务（按需添加）
+#     # deepseek:
+#     #   api_key: "sk-xxxxxxxxxxxxxxxxxxxx"
+#     #   base_url: "https://api.deepseek.com/v1"
+
+# ============================================================
+# 业务自定义扩展配置（对应 Config[T] 中的 App 字段）
+# 将业务特有的配置项放在 app 块下，Load[YourAppConfig](ctx) 会自动映射到 T。
+# 不需要扩展配置时，此块可整体删除。
+# ============================================================
+# app:
+#   some_key: some_value

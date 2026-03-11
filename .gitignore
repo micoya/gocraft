@@ -1,0 +1,10 @@
+# IDE & Editor
+.vscode
+.idea
+.cursor
+.trae
+
+# Binary
+/out
+*.exe
+
