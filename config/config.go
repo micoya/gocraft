@@ -76,8 +76,9 @@ type OtelConfig struct {
 
 // DBConfig 单个数据库连接配置
 type DBConfig struct {
-	Driver string `mapstructure:"driver"` // "mysql" 或 "postgres"
-	DSN    string `mapstructure:"dsn"`
+	Driver                   string `mapstructure:"driver"` // "mysql" 或 "postgres"
+	DSN                      string `mapstructure:"dsn"`
+	DisableMigrateForeignKey *bool  `mapstructure:"disable_migrate_foreign_key"` // AutoMigrate 不产生外键约束，nil 视为 true
 }
 
 // RedisConfig 单个 Redis 连接配置

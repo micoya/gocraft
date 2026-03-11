@@ -132,6 +132,8 @@ http_server:
 #       driver: mysql
 #       # Go MySQL DSN 格式：user:pass@tcp(host:port)/dbname?parseTime=true
 #       dsn: "root:password@tcp(127.0.0.1:3306)/mydb?charset=utf8mb4&parseTime=true"
+#       # AutoMigrate 时是否禁止在数据库层面创建外键约束。默认：true（不创建外键）。
+#       # disable_migrate_foreign_key: true
 #     # 从库（按需添加，gormx.Must(dao, "replica") 取用）
 #     replica:
 #       driver: mysql

@@ -41,7 +41,9 @@ func (p *provider) Init(ctx context.Context) error {
 		return err
 	}
 
-	p.db, err = gorm.Open(dialector, &gorm.Config{})
+	p.db, err = gorm.Open(dialector, &gorm.Config{
+		DisableForeignKeyConstraintWhenMigrating: p.cfg.DisableMigrateForeignKey == nil || *p.cfg.DisableMigrateForeignKey,
+	})
 	if err != nil {
 		return err
 	}
