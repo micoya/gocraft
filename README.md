@@ -1,8 +1,18 @@
 # gocraft
 
-Go 开发脚手架包集合。模块路径：`github.com/micoya/gocraft`
+自用 Go 项目脚手架。模块路径：`github.com/micoya/gocraft`
+
+没事就不要来看了吧(?)
 
 ---
+
+## Bootstrap
+
+```bash
+go install github.com/micoya/gocraft/cmd/gocraft@v0.1.4
+
+gocraft new <my-project>
+```
 
 ## 包概览
 
