@@ -103,12 +103,20 @@ type OSSConfig struct {
 	AccessKeySecret string `mapstructure:"access_key_secret"` // 阿里云 AccessKey Secret
 }
 
+// MCacheConfig 单个内存缓存配置
+type MCacheConfig struct {
+	NumCounters int64 `mapstructure:"num_counters"` // 频率计数器数量，建议为预期最大缓存条目数的 10 倍；默认 10_000_000
+	MaxCost     int64 `mapstructure:"max_cost"`     // 缓存最大容量（字节）；默认 512MB
+	BufferItems int64 `mapstructure:"buffer_items"` // 写入缓冲区大小；默认 64
+}
+
 // DAOConfig 数据访问层配置
 type DAOConfig struct {
 	Database map[string]DBConfig      `mapstructure:"database"`
 	Redis    map[string]RedisConfig   `mapstructure:"redis"`
 	OSS      map[string]OSSConfig     `mapstructure:"oss"`
 	OpenAI   map[string]OpenAIConfig  `mapstructure:"openai"`
+	MCache   map[string]MCacheConfig  `mapstructure:"mcache"`
 }
 
 // Config 应用总配置。T 为各业务自定义的扩展配置，对应配置文件中的 app 块。

@@ -46,6 +46,11 @@ func NewFromConfig(cfg *config.DAOConfig) (*DAO, error) {
 			return nil, err
 		}
 	}
+	for name, c := range cfg.MCache {
+		if err := d.add("mcache", name, c); err != nil {
+			return nil, err
+		}
+	}
 
 	return d, nil
 }

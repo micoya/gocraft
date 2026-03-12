@@ -121,7 +121,7 @@ http_server:
 
 # ============================================================
 # 数据访问层（DAO）配置
-# database / redis / oss / openai 均支持多实例，key 为自定义连接名称。
+# database / redis / oss / openai / mcache 均支持多实例，key 为自定义连接名称。
 # 各 Must() 函数省略 name 参数时默认取名为 "default" 的实例。
 # 整个 dao 块不填（或注释掉）表示不使用任何数据源。
 # ============================================================
@@ -185,6 +185,17 @@ http_server:
 #     # deepseek:
 #     #   api_key: "sk-xxxxxxxxxxxxxxxxxxxx"
 #     #   base_url: "https://api.deepseek.com/v1"
+#
+#   mcache:
+#     # 默认内存缓存实例（mcachex.Must(dao) 即取此实例）
+#     # 基于 ristretto 高性能并发缓存
+#     default:
+#       # 频率计数器数量，建议为预期最大缓存条目数的 10 倍。默认：10000000
+#       num_counters: 10000000
+#       # 缓存最大容量（字节）。默认：536870912（512MB）
+#       max_cost: 536870912
+#       # 写入缓冲区大小。默认：64
+#       buffer_items: 64
 
 # ============================================================
 # 业务自定义扩展配置（对应 Config[T] 中的 App 字段）
