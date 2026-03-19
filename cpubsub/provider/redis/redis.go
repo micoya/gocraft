@@ -11,6 +11,10 @@ import (
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/micoya/gocraft/cpubsub"
 )
@@ -19,9 +23,13 @@ const (
 	defaultPrefix = "channel:"
 	defaultTTL    = 7 * 24 * time.Hour
 
-	fieldBody     = "b"
-	fieldCompress = "c"
-	compressFlag  = "1"
+	fieldBody       = "b"
+	fieldCompress   = "c"
+	fieldTraceparent = "tp"
+	fieldTracestate  = "ts"
+	compressFlag    = "1"
+
+	tracerName = "cpubsub/redis"
 )
 
 // Option 配置 Redis Stream PubSub 的可选项。
@@ -31,6 +39,7 @@ type options struct {
 	prefix   string
 	ttl      time.Duration
 	compress bool
+	tracing  bool
 }
 
 // WithPrefix 设置 Stream KEY 前缀，默认 "channel:"。
@@ -46,6 +55,27 @@ func WithTTL(ttl time.Duration) Option {
 // WithCompress 启用 deflate 压缩。适用于消息体较大的场景。
 func WithCompress(on bool) Option {
 	return func(o *options) { o.compress = on }
+}
+
+// WithTracing 启用 OTel 分布式追踪。
+// 启用后，Publish 时将 W3C TraceContext 注入消息字段（tp/ts），
+// Subscribe 时自动提取并创建 consumer span，使消息的完整链路可观测。
+// 注意：同一 topic 的生产者和消费者需同时启用才能获得完整链路。
+func WithTracing(on bool) Option {
+	return func(o *options) { o.tracing = on }
+}
+
+// streamCarrier 将 W3C TraceContext header 名映射到 Redis Stream 消息字段。
+type streamCarrier map[string]string
+
+func (c streamCarrier) Get(key string) string      { return c[key] }
+func (c streamCarrier) Set(key, val string)         { c[key] = val }
+func (c streamCarrier) Keys() []string {
+	keys := make([]string, 0, len(c))
+	for k := range c {
+		keys = append(keys, k)
+	}
+	return keys
 }
 
 type pubsub struct {
@@ -70,7 +100,26 @@ func (p *pubsub) key(topic string) string {
 	return p.opts.prefix + topic
 }
 
-func (p *pubsub) Publish(ctx context.Context, topic string, body string) (string, error) {
+func (p *pubsub) Publish(ctx context.Context, topic string, body string) (msgID string, err error) {
+	if p.opts.tracing {
+		var span trace.Span
+		ctx, span = otel.Tracer(tracerName).Start(ctx, "publish "+topic,
+			trace.WithSpanKind(trace.SpanKindProducer),
+			trace.WithAttributes(
+				attribute.String("messaging.system", "redis"),
+				attribute.String("messaging.destination.name", topic),
+				attribute.String("messaging.operation", "publish"),
+			),
+		)
+		defer func() {
+			if err != nil {
+				span.RecordError(err)
+				span.SetStatus(codes.Error, err.Error())
+			}
+			span.End()
+		}()
+	}
+
 	key := p.key(topic)
 	values := map[string]any{fieldBody: body}
 
@@ -81,6 +130,17 @@ func (p *pubsub) Publish(ctx context.Context, topic string, body string) (string
 		}
 		values[fieldBody] = compressed
 		values[fieldCompress] = compressFlag
+	}
+
+	if p.opts.tracing {
+		carrier := streamCarrier{}
+		otel.GetTextMapPropagator().Inject(ctx, carrier)
+		if v := carrier["traceparent"]; v != "" {
+			values[fieldTraceparent] = v
+		}
+		if v := carrier["tracestate"]; v != "" {
+			values[fieldTracestate] = v
+		}
 	}
 
 	pipe := p.client.Pipeline()
@@ -147,15 +207,54 @@ func (p *pubsub) Subscribe(ctx context.Context, topic, group, consumer string, h
 				if err != nil {
 					return fmt.Errorf("cpubsub/redis: decode: %w", err)
 				}
-				if err := handler(ctx, msg); err != nil {
+				if err := p.dispatch(ctx, topic, group, key, raw, msg, handler); err != nil {
 					return err
-				}
-				if err := p.client.XAck(ctx, key, group, raw.ID).Err(); err != nil {
-					return fmt.Errorf("cpubsub/redis: xack: %w", err)
 				}
 			}
 		}
 	}
+}
+
+// dispatch 处理单条消息：如果启用了 tracing，则提取远端 span context 并创建 consumer span。
+func (p *pubsub) dispatch(ctx context.Context, topic, group, key string, raw goredis.XMessage, msg cpubsub.Message, handler cpubsub.Handler) (err error) {
+	msgCtx := ctx
+	if p.opts.tracing {
+		carrier := streamCarrier{}
+		if v, _ := raw.Values[fieldTraceparent].(string); v != "" {
+			carrier["traceparent"] = v
+		}
+		if v, _ := raw.Values[fieldTracestate].(string); v != "" {
+			carrier["tracestate"] = v
+		}
+		msgCtx = otel.GetTextMapPropagator().Extract(ctx, carrier)
+
+		var span trace.Span
+		msgCtx, span = otel.Tracer(tracerName).Start(msgCtx, "process "+topic,
+			trace.WithSpanKind(trace.SpanKindConsumer),
+			trace.WithAttributes(
+				attribute.String("messaging.system", "redis"),
+				attribute.String("messaging.destination.name", topic),
+				attribute.String("messaging.consumer.group.name", group),
+				attribute.String("messaging.message.id", raw.ID),
+				attribute.String("messaging.operation", "process"),
+			),
+		)
+		defer func() {
+			if err != nil {
+				span.RecordError(err)
+				span.SetStatus(codes.Error, err.Error())
+			}
+			span.End()
+		}()
+	}
+
+	if err = handler(msgCtx, msg); err != nil {
+		return err
+	}
+	if err = p.client.XAck(ctx, key, group, raw.ID).Err(); err != nil {
+		return fmt.Errorf("cpubsub/redis: xack: %w", err)
+	}
+	return nil
 }
 
 func (p *pubsub) decodeMessage(topic string, raw goredis.XMessage) (cpubsub.Message, error) {

@@ -11,8 +11,33 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	goredis "github.com/redis/go-redis/v9"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/micoya/gocraft/cpubsub"
 )
+
+// setupTestOTel 注册同步内存 exporter 并配置 W3C TraceContext 传播器。
+// 对 cpubsub 跨进程传播测试至关重要：若未设置 TextMapPropagator，
+// Inject/Extract 将成为 no-op，traceparent 字段不会被写入/读出。
+func setupTestOTel(t *testing.T) *tracetest.InMemoryExporter {
+	t.Helper()
+	exp := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exp))
+	prevTP := otel.GetTracerProvider()
+	prevProp := otel.GetTextMapPropagator()
+	otel.SetTracerProvider(tp)
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	t.Cleanup(func() {
+		_ = tp.Shutdown(context.Background())
+		otel.SetTracerProvider(prevTP)
+		otel.SetTextMapPropagator(prevProp)
+	})
+	return exp
+}
 
 func setup(t *testing.T, opts ...Option) (cpubsub.PubSub, *miniredis.Miniredis) {
 	t.Helper()
@@ -176,5 +201,126 @@ func TestCompressRoundTrip(t *testing.T) {
 	}
 	if string(decompressed) != original {
 		t.Errorf("round-trip failed: got %q", decompressed)
+	}
+}
+
+// ---- WithTracing 测试 ----
+
+func TestWithTracing_PublishCreatesProducerSpan(t *testing.T) {
+	exp := setupTestOTel(t)
+	ps, _ := setup(t, WithTracing(true))
+
+	_, err := ps.Publish(context.Background(), "events", `{"type":"order"}`)
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	spans := exp.GetSpans()
+	var found bool
+	for _, s := range spans {
+		if strings.Contains(s.Name, "publish") {
+			found = true
+			if s.SpanKind.String() != "producer" {
+				t.Errorf("publish span kind = %q, want producer", s.SpanKind)
+			}
+			break
+		}
+	}
+	if !found {
+		names := make([]string, len(spans))
+		for i, s := range spans {
+			names[i] = s.Name
+		}
+		t.Errorf("no publish span found; all spans: %v", names)
+	}
+}
+
+func TestWithTracing_SubscribeCreatesConsumerSpan(t *testing.T) {
+	exp := setupTestOTel(t)
+	ps, _ := setup(t, WithTracing(true))
+	ctx := context.Background()
+
+	if _, err := ps.Publish(ctx, "events", `{"type":"payment"}`); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	exp.Reset() // 只关注消费侧 span
+
+	subCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	_ = ps.Subscribe(subCtx, "events", "grp", "w1", func(_ context.Context, _ cpubsub.Message) error {
+		cancel()
+		return nil
+	})
+
+	spans := exp.GetSpans()
+	var found bool
+	for _, s := range spans {
+		if strings.Contains(s.Name, "process") {
+			found = true
+			if s.SpanKind.String() != "consumer" {
+				t.Errorf("process span kind = %q, want consumer", s.SpanKind)
+			}
+			break
+		}
+	}
+	if !found {
+		names := make([]string, len(spans))
+		for i, s := range spans {
+			names[i] = s.Name
+		}
+		t.Errorf("no process span found; all spans: %v", names)
+	}
+}
+
+// TestWithTracing_TracePropagation 是最关键的端到端测试：
+// 验证 publisher 注入的 trace context 能被 consumer 正确提取，
+// 使两端 span 共享同一个 TraceID，形成完整的分布式链路。
+func TestWithTracing_TracePropagation(t *testing.T) {
+	setupTestOTel(t)
+	ps, _ := setup(t, WithTracing(true))
+	ctx := context.Background()
+
+	// 用一个根 span 模拟 publisher 侧的请求上下文
+	rootCtx, rootSpan := otel.Tracer("test").Start(ctx, "publisher-handler")
+	wantTraceID := rootSpan.SpanContext().TraceID()
+
+	if _, err := ps.Publish(rootCtx, "orders", `{"id":42}`); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	rootSpan.End()
+
+	var gotTraceID trace.TraceID
+	subCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	_ = ps.Subscribe(subCtx, "orders", "grp", "w1", func(msgCtx context.Context, _ cpubsub.Message) error {
+		// msgCtx 应包含从消息中还原的 span context，TraceID 与 publisher 一致
+		gotTraceID = trace.SpanFromContext(msgCtx).SpanContext().TraceID()
+		cancel()
+		return nil
+	})
+
+	if gotTraceID == (trace.TraceID{}) {
+		t.Fatal("consumer received zero TraceID; trace context was not propagated")
+	}
+	if gotTraceID != wantTraceID {
+		t.Errorf("TraceID mismatch:\n  publisher: %s\n  consumer:  %s", wantTraceID, gotTraceID)
+	}
+}
+
+func TestWithTracing_NoTracingByDefault(t *testing.T) {
+	exp := setupTestOTel(t)
+	// 不传 WithTracing，默认不追踪
+	ps, _ := setup(t)
+
+	if _, err := ps.Publish(context.Background(), "plain", "hello"); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	// 不应有任何 cpubsub span
+	for _, s := range exp.GetSpans() {
+		if strings.Contains(s.Name, "publish") || strings.Contains(s.Name, "process") {
+			t.Errorf("unexpected span %q when tracing is disabled", s.Name)
+		}
 	}
 }

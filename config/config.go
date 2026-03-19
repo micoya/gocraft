@@ -110,13 +110,170 @@ type MCacheConfig struct {
 	BufferItems int64 `mapstructure:"buffer_items"` // 写入缓冲区大小；默认 64
 }
 
+// RabbitMQConfig 单个 RabbitMQ 连接配置
+type RabbitMQConfig struct {
+	URL string `mapstructure:"url"` // AMQP 连接地址，如 amqp://user:pass@host:5672/vhost
+}
+
+// KafkaConfig 单个 Kafka 集群配置
+type KafkaConfig struct {
+	Brokers     []string      `mapstructure:"brokers"`      // Broker 地址列表，如 ["kafka:9092"]
+	DialTimeout time.Duration `mapstructure:"dial_timeout"` // 拨号超时，默认 10s
+}
+
+// ElasticsearchConfig 单个 Elasticsearch 集群配置
+type ElasticsearchConfig struct {
+	Addresses []string `mapstructure:"addresses"` // 节点地址列表，如 ["http://localhost:9200"]
+	Username  string   `mapstructure:"username"`
+	Password  string   `mapstructure:"password"`
+	APIKey    string   `mapstructure:"api_key"`  // 优先级高于 Username/Password
+	CloudID   string   `mapstructure:"cloud_id"` // Elastic Cloud 部署 ID
+}
+
+// MongoConfig 单个 MongoDB 连接配置
+type MongoConfig struct {
+	URI            string        `mapstructure:"uri"`             // MongoDB 连接字符串，如 mongodb://host:27017
+	ConnectTimeout time.Duration `mapstructure:"connect_timeout"` // 连接超时，默认 10s
+}
+
+// RetryConfig HTTP 客户端重试配置。
+type RetryConfig struct {
+	// MaxAttempts 最大重试次数（不含首次请求），默认 3。
+	MaxAttempts int `mapstructure:"max_attempts"`
+	// WaitMin 首次重试前的最小等待时间，默认 100ms。
+	WaitMin time.Duration `mapstructure:"wait_min"`
+	// WaitMax 重试等待时间上限（指数退避不超过此值），默认 2s。
+	WaitMax time.Duration `mapstructure:"wait_max"`
+}
+
+// CircuitBreakerConfig HTTP 客户端熔断器配置。
+type CircuitBreakerConfig struct {
+	// MaxRequests 半开状态下允许通过的最大探测请求数，默认 1。
+	MaxRequests uint32 `mapstructure:"max_requests"`
+	// Interval 统计滑动窗口时长，默认 60s。窗口内连续失败达到阈值时熔断。
+	Interval time.Duration `mapstructure:"interval"`
+	// Timeout 熔断持续时间（Open → HalfOpen），默认 30s。
+	Timeout time.Duration `mapstructure:"timeout"`
+	// Threshold 连续失败次数阈值，达到后进入熔断状态，默认 5。
+	Threshold uint32 `mapstructure:"threshold"`
+}
+
+// HTTPClientConfig 单个外部 HTTP 服务客户端配置
+type HTTPClientConfig struct {
+	// BaseURL 外部服务的根地址，如 https://payment.internal。
+	// 用于健康检查（HEAD 请求）和 OTel peer.service 属性；业务代码仍需自行拼接完整 URL。
+	BaseURL string `mapstructure:"base_url"`
+	// Timeout 单次请求的完整超时（含重定向），默认 30s。
+	Timeout time.Duration `mapstructure:"timeout"`
+	// MaxIdleConns 全局最大空闲连接数，默认 100。
+	MaxIdleConns int `mapstructure:"max_idle_conns"`
+	// MaxConnsPerHost 每个 host 的最大连接数（含活跃+空闲），0 = 不限。
+	MaxConnsPerHost int `mapstructure:"max_conns_per_host"`
+	// IdleConnTimeout 空闲连接保活超时，默认 90s。
+	IdleConnTimeout time.Duration `mapstructure:"idle_conn_timeout"`
+	// TLSSkipVerify 跳过 TLS 证书校验，仅用于开发/内网测试环境。
+	TLSSkipVerify bool `mapstructure:"tls_skip_verify"`
+	// Retry 重试配置。nil 或零值表示不重试。
+	Retry *RetryConfig `mapstructure:"retry"`
+	// CircuitBreaker 熔断器配置。nil 或零值表示不启用熔断。
+	CircuitBreaker *CircuitBreakerConfig `mapstructure:"circuit_breaker"`
+}
+
+// TemporalTLSConfig Temporal 连接 TLS 证书配置。
+type TemporalTLSConfig struct {
+	// CertFile 客户端证书文件路径（PEM），mTLS 时需要。
+	CertFile string `mapstructure:"cert_file"`
+	// KeyFile 客户端私钥文件路径（PEM），mTLS 时需要。
+	KeyFile string `mapstructure:"key_file"`
+	// CAFile 自定义 CA 证书路径，空则使用系统 CA。
+	CAFile string `mapstructure:"ca_file"`
+	// ServerName TLS SNI，空则使用 host_port 中的 hostname。
+	ServerName string `mapstructure:"server_name"`
+	// InsecureSkipVerify 跳过服务端证书校验，仅限开发环境。
+	InsecureSkipVerify bool `mapstructure:"insecure_skip_verify"`
+}
+
+// TemporalWorkerConfig 全局 Worker 并发控制默认值。
+// 每个 NewWorker 调用可通过 WorkerOption 独立覆盖。
+type TemporalWorkerConfig struct {
+	// MaxConcurrentActivityExecutors 最大并发 Activity 执行数，默认 100。
+	MaxConcurrentActivityExecutors int `mapstructure:"max_concurrent_activity_executors"`
+	// MaxConcurrentWorkflowTaskExecutors 最大并发 Workflow Task 执行数，默认 100。
+	MaxConcurrentWorkflowTaskExecutors int `mapstructure:"max_concurrent_workflow_task_executors"`
+	// MaxConcurrentLocalActivityExecutors 最大并发 Local Activity 执行数，默认 100。
+	MaxConcurrentLocalActivityExecutors int `mapstructure:"max_concurrent_local_activity_executors"`
+}
+
+// TemporalConfig Temporal 服务连接配置。
+type TemporalConfig struct {
+	// HostPort Temporal Server gRPC 地址。
+	// 本地开发默认：localhost:7233
+	// Temporal Cloud 格式：<namespace>.<accountId>.tmprl.cloud:7233
+	HostPort string `mapstructure:"host_port"`
+
+	// Namespace Temporal 命名空间，默认 "default"。
+	// Temporal Cloud 格式：<namespace>.<accountId>
+	Namespace string `mapstructure:"namespace"`
+
+	// APIKey Temporal Cloud API Key 认证（推荐方式）。
+	// 设置后自动启用 TLS，无需额外 tls 配置。
+	// 从 Temporal Cloud 控制台生成：cloud.temporal.io → API Keys。
+	APIKey string `mapstructure:"api_key"`
+
+	// TLS mTLS 或自托管 TLS 配置。
+	// 使用 Temporal Cloud API Key 时无需配置。
+	TLS *TemporalTLSConfig `mapstructure:"tls"`
+
+	// Worker 全局 Worker 并发默认配置，各 Worker 可独立覆盖。
+	Worker *TemporalWorkerConfig `mapstructure:"worker"`
+}
+
+// CronConfig 定时任务调度器配置。
+type CronConfig struct {
+	// Timezone 任务调度时区，默认 "Asia/Shanghai"。
+	Timezone string `mapstructure:"timezone"`
+	// Distributed 是否启用分布式防重复执行（多实例部署时同一时刻只有一个节点执行任务）。
+	// 启用时需通过 ccron.WithLocker 注入分布式锁实现。默认 false。
+	Distributed bool `mapstructure:"distributed"`
+	// LockRedis 分布式模式下使用的 Redis 实例名（对应 dao.redis 中的 key），默认 "default"。
+	LockRedis string `mapstructure:"lock_redis"`
+	// LockTTL 每个任务分布式锁的持有时长，应略大于任务预期最长执行时间，默认 5m。
+	LockTTL time.Duration `mapstructure:"lock_ttl"`
+}
+
 // DAOConfig 数据访问层配置
 type DAOConfig struct {
-	Database map[string]DBConfig      `mapstructure:"database"`
-	Redis    map[string]RedisConfig   `mapstructure:"redis"`
-	OSS      map[string]OSSConfig     `mapstructure:"oss"`
-	OpenAI   map[string]OpenAIConfig  `mapstructure:"openai"`
-	MCache   map[string]MCacheConfig  `mapstructure:"mcache"`
+	Database      map[string]DBConfig            `mapstructure:"database"`
+	Redis         map[string]RedisConfig         `mapstructure:"redis"`
+	OSS           map[string]OSSConfig           `mapstructure:"oss"`
+	OpenAI        map[string]OpenAIConfig        `mapstructure:"openai"`
+	MCache        map[string]MCacheConfig        `mapstructure:"mcache"`
+	HTTPClient    map[string]HTTPClientConfig    `mapstructure:"http_client"`
+	RabbitMQ      map[string]RabbitMQConfig      `mapstructure:"rabbitmq"`
+	Kafka         map[string]KafkaConfig         `mapstructure:"kafka"`
+	Elasticsearch map[string]ElasticsearchConfig `mapstructure:"elasticsearch"`
+	Mongo         map[string]MongoConfig         `mapstructure:"mongo"`
+}
+
+// DynProviderConfig 单个动态配置 provider 的声明。
+type DynProviderConfig struct {
+	// Type provider 类型，需 import 对应子包以注册工厂函数。
+	// 内置可选值："redis"、"db"。
+	Type string `mapstructure:"type"`
+	// Name 对应 dao 中同类型资源的实例名，默认 "default"。
+	// 例如 type=redis, name=default 对应 dao.redis.default。
+	Name string `mapstructure:"name"`
+	// Key 配置在存储中的 key。
+	// redis 类型：Redis key 名称；db 类型：dynamic_configs 表的 key 列值。
+	Key string `mapstructure:"key"`
+	// PollInterval 轮询间隔，默认 30s。
+	PollInterval time.Duration `mapstructure:"poll_interval"`
+}
+
+// DynConfig 动态配置声明，对应配置文件中的 dynamic 块。
+type DynConfig struct {
+	// Provider 动态配置 provider 声明，同一应用只允许使用一个 provider。
+	Provider *DynProviderConfig `mapstructure:"provider"`
 }
 
 // Config 应用总配置。T 为各业务自定义的扩展配置，对应配置文件中的 app 块。
@@ -128,7 +285,13 @@ type Config[T any] struct {
 	HTTPServer *HTTPServerConfig `mapstructure:"http_server"`
 	Otel       *OtelConfig       `mapstructure:"otel"`
 	DAO        *DAOConfig        `mapstructure:"dao"`
+	Cron       *CronConfig       `mapstructure:"cron"`
+	Temporal   *TemporalConfig   `mapstructure:"temporal"`
+	Dynamic    *DynConfig        `mapstructure:"dynamic"`
 	App        T                 `mapstructure:"app"`
+
+	// v 保存内部 viper 实例，供 Manager 热更新时复用，不参与序列化。
+	v *viper.Viper
 }
 
 // Load 从配置文件和环境变量加载配置，优先级：默认值 < 配置文件 < 环境变量。
@@ -169,6 +332,7 @@ func Load[T any](_ context.Context, opts ...Option) (*Config[T], error) {
 	if err := v.Unmarshal(cfg); err != nil {
 		return nil, fmt.Errorf("config: unmarshal: %w", err)
 	}
+	cfg.v = v
 
 	return cfg, nil
 }
@@ -205,4 +369,15 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("otel.trace.sample_rate", 1.0)
 	v.SetDefault("otel.metric.endpoint", "")
 	v.SetDefault("otel.metric.insecure", false)
+
+	v.SetDefault("cron.timezone", "Asia/Shanghai")
+	v.SetDefault("cron.distributed", false)
+	v.SetDefault("cron.lock_redis", "default")
+	v.SetDefault("cron.lock_ttl", 5*time.Minute)
+
+	v.SetDefault("temporal.host_port", "localhost:7233")
+	v.SetDefault("temporal.namespace", "default")
+	v.SetDefault("temporal.worker.max_concurrent_activity_executors", 100)
+	v.SetDefault("temporal.worker.max_concurrent_workflow_task_executors", 100)
+	v.SetDefault("temporal.worker.max_concurrent_local_activity_executors", 100)
 }

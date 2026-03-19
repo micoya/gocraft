@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/micoya/gocraft/config"
 )
@@ -48,6 +49,31 @@ func NewFromConfig(cfg *config.DAOConfig) (*DAO, error) {
 	}
 	for name, c := range cfg.MCache {
 		if err := d.add("mcache", name, c); err != nil {
+			return nil, err
+		}
+	}
+	for name, c := range cfg.HTTPClient {
+		if err := d.add("httpclient", name, c); err != nil {
+			return nil, err
+		}
+	}
+	for name, c := range cfg.RabbitMQ {
+		if err := d.add("rabbitmq", name, c); err != nil {
+			return nil, err
+		}
+	}
+	for name, c := range cfg.Kafka {
+		if err := d.add("kafka", name, c); err != nil {
+			return nil, err
+		}
+	}
+	for name, c := range cfg.Elasticsearch {
+		if err := d.add("elasticsearch", name, c); err != nil {
+			return nil, err
+		}
+	}
+	for name, c := range cfg.Mongo {
+		if err := d.add("mongo", name, c); err != nil {
 			return nil, err
 		}
 	}
@@ -134,22 +160,50 @@ func (d *DAO) Close(ctx context.Context) error {
 	return firstErr
 }
 
-// HealthCheck 检查所有已初始化 provider 的健康状态。
+// HealthCheck 并行检查所有已初始化 provider 的健康状态，收集全部错误后一并返回。
+// 相比串行检查，运维时可一次看到所有不健康的资源。
 func (d *DAO) HealthCheck(ctx context.Context) error {
 	d.mu.RLock()
-	defer d.mu.RUnlock()
 
+	type task struct {
+		kind, name string
+		provider   Provider
+	}
+	var tasks []task
 	for kind, names := range d.entries {
 		for name, e := range names {
-			if !e.inited {
-				continue
-			}
-			if err := e.provider.Health(ctx); err != nil {
-				return fmt.Errorf("dao: health %s/%s: %w", kind, name, err)
+			if e.inited {
+				tasks = append(tasks, task{kind, name, e.provider})
 			}
 		}
 	}
-	return nil
+	d.mu.RUnlock()
+
+	if len(tasks) == 0 {
+		return nil
+	}
+
+	errs := make([]error, len(tasks))
+	var wg sync.WaitGroup
+	var hasErr atomic.Bool
+
+	wg.Add(len(tasks))
+	for i, t := range tasks {
+		i, t := i, t
+		go func() {
+			defer wg.Done()
+			if err := t.provider.Health(ctx); err != nil {
+				errs[i] = fmt.Errorf("dao: health %s/%s: %w", t.kind, t.name, err)
+				hasErr.Store(true)
+			}
+		}()
+	}
+	wg.Wait()
+
+	if !hasErr.Load() {
+		return nil
+	}
+	return errors.Join(errs...)
 }
 
 // Get 返回指定资源的底层客户端实例。DAO 未初始化时返回错误。

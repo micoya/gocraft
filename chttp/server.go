@@ -128,6 +128,11 @@ func (s *Server) Engine() *gin.Engine {
 	return s.engine
 }
 
+// Addr 返回 HTTP 服务监听地址（如 ":8080"）。
+func (s *Server) Addr() string {
+	return s.cfg.Addr
+}
+
 // Run 启动 HTTP 服务并阻塞，直到 ctx 取消后执行优雅关闭。
 func (s *Server) Run(ctx context.Context) error {
 	errCh := make(chan error, 1)

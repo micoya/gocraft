@@ -287,6 +287,66 @@ func TestHealthCheck_Failure(t *testing.T) {
 	}
 }
 
+// TestHealthCheck_CollectsAllErrors 验证并行检查时所有失败都被聚合（不短路）
+func TestHealthCheck_CollectsAllErrors(t *testing.T) {
+	d := &DAO{
+		entries: map[string]map[string]*entry{
+			"db": {
+				"primary": {provider: &mockProvider{
+					healthFn: func(ctx context.Context) error { return errors.New("db-timeout") },
+				}, inited: true},
+			},
+			"redis": {
+				"cache": {provider: &mockProvider{
+					healthFn: func(ctx context.Context) error { return errors.New("redis-down") },
+				}, inited: true},
+			},
+			"kafka": {
+				"events": {provider: &mockProvider{
+					healthFn: func(ctx context.Context) error { return errors.New("kafka-error") },
+				}, inited: true},
+			},
+		},
+		inited: true,
+	}
+
+	err := d.HealthCheck(context.Background())
+	if err == nil {
+		t.Fatal("expected combined health check error")
+	}
+
+	for _, want := range []string{"db-timeout", "redis-down", "kafka-error"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("expected error to contain %q, got: %v", want, err)
+		}
+	}
+}
+
+// TestHealthCheck_SkipsUninitializedEntries 验证未 Init 的 provider 不参与检查
+func TestHealthCheck_SkipsUninitializedEntries(t *testing.T) {
+	healthCalled := false
+	d := &DAO{
+		entries: map[string]map[string]*entry{
+			"mock": {
+				"uninited": {provider: &mockProvider{
+					healthFn: func(ctx context.Context) error {
+						healthCalled = true
+						return errors.New("should not be called")
+					},
+				}, inited: false},
+			},
+		},
+		inited: true,
+	}
+
+	if err := d.HealthCheck(context.Background()); err != nil {
+		t.Fatalf("HealthCheck() = %v, want nil", err)
+	}
+	if healthCalled {
+		t.Error("Health() should not be called on uninitialized entry")
+	}
+}
+
 // --- Get ---
 
 func TestGet_BeforeInit(t *testing.T) {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	goredis "github.com/redis/go-redis/v9"
+	"github.com/redis/go-redis/extra/redisotel/v9"
 
 	"github.com/micoya/gocraft/config"
 	"github.com/micoya/gocraft/cdao"
@@ -35,6 +36,12 @@ func (p *provider) Init(ctx context.Context) error {
 		ReadTimeout:  p.cfg.ReadTimeout,
 		WriteTimeout: p.cfg.WriteTimeout,
 	})
+	if err := redisotel.InstrumentTracing(p.client); err != nil {
+		return fmt.Errorf("dao/provider/redis: instrument tracing: %w", err)
+	}
+	if err := redisotel.InstrumentMetrics(p.client); err != nil {
+		return fmt.Errorf("dao/provider/redis: instrument metrics: %w", err)
+	}
 	return p.client.Ping(ctx).Err()
 }
 

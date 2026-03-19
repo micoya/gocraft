@@ -48,6 +48,10 @@ func (p *provider) Init(ctx context.Context) error {
 		return err
 	}
 
+	if err := p.db.Use(gormOtelPlugin{}); err != nil {
+		return fmt.Errorf("dao/provider/database: instrument tracing: %w", err)
+	}
+
 	sqlDB, err := p.db.DB()
 	if err != nil {
 		return err

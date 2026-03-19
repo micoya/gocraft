@@ -69,7 +69,7 @@ func (p *provider) Close(_ context.Context) error {
 func (p *provider) Health(_ context.Context) error {
 	if p.cache == nil {
 		return fmt.Errorf("dao/provider/mcache: cache not initialized")
-	}
+	} 
 	return nil
 }
 

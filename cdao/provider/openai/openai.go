@@ -32,7 +32,10 @@ type provider struct {
 }
 
 func (p *provider) Init(_ context.Context) error {
-	opts := []option.RequestOption{option.WithAPIKey(p.cfg.APIKey)}
+	opts := []option.RequestOption{
+		option.WithAPIKey(p.cfg.APIKey),
+		option.WithMiddleware(otelMiddleware),
+	}
 	if p.cfg.BaseURL != "" {
 		opts = append(opts, option.WithBaseURL(p.cfg.BaseURL))
 	}

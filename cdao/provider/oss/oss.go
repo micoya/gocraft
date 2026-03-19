@@ -3,6 +3,7 @@ package oss
 import (
 	"context"
 	"fmt"
+	"net/http"
 
 	alioss "github.com/aliyun/aliyun-oss-go-sdk/oss"
 
@@ -37,7 +38,13 @@ type provider struct {
 }
 
 func (p *provider) Init(_ context.Context) error {
-	client, err := alioss.New(p.cfg.Endpoint, p.cfg.AccessKeyID, p.cfg.AccessKeySecret)
+	httpClient := &http.Client{
+		Transport: &otelTransport{base: http.DefaultTransport},
+	}
+	client, err := alioss.New(
+		p.cfg.Endpoint, p.cfg.AccessKeyID, p.cfg.AccessKeySecret,
+		alioss.HTTPClient(httpClient),
+	)
 	if err != nil {
 		return fmt.Errorf("dao/provider/oss: create client: %w", err)
 	}
