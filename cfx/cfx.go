@@ -12,6 +12,12 @@
 //	    cfx.ProvideLocker(),
 //	    cfx.ProvideCron[AppConfig](),
 //	    cfx.ProvideTemporal[AppConfig](),
+//	    cfx.ProvideUIDUUID(),
+//	    cfx.ProvideUIDSnowflakeStatic(1),
+//	    // 或 cfx.ProvideUIDSnowflakeStaticFromConfig[AppConfig](),
+//	    // cfx.ProvideUIDRedisSnowflake("default", cuid.WithRedisKeyPrefix("app:sf:")),
+//	    // cfx.ProvideUIDRedisSnowflakeFromConfig[AppConfig](),
+//	    cfx.ProvideUIDSonyflake(),
 //	).Run()
 package cfx
 

@@ -5,11 +5,13 @@ go 1.25.0
 require (
 	github.com/alicebob/miniredis/v2 v2.37.0
 	github.com/aliyun/aliyun-oss-go-sdk v3.0.2+incompatible
+	github.com/bwmarrin/snowflake v0.3.0
 	github.com/dgraph-io/ristretto/v2 v2.4.0
 	github.com/elastic/go-elasticsearch/v8 v8.19.3
 	github.com/gin-contrib/cors v1.7.6
 	github.com/gin-contrib/pprof v1.5.3
 	github.com/gin-gonic/gin v1.11.0
+	github.com/google/uuid v1.6.0
 	github.com/joho/godotenv v1.5.1
 	github.com/openai/openai-go v1.12.0
 	github.com/prometheus/client_golang v1.23.2
@@ -19,6 +21,7 @@ require (
 	github.com/robfig/cron/v3 v3.0.0
 	github.com/segmentio/kafka-go v0.4.50
 	github.com/sony/gobreaker v0.0.0-20260101004718-0ae90251b774
+	github.com/sony/sonyflake/v2 v2.2.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
 	go.mongodb.org/mongo-driver v1.17.9
@@ -70,7 +73,6 @@ require (
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/mock v1.6.0 // indirect
 	github.com/golang/snappy v1.0.0 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/go-grpc-middleware/v2 v2.3.2 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.27.7 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect

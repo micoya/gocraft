@@ -228,6 +228,30 @@ type TemporalConfig struct {
 	Worker *TemporalWorkerConfig `mapstructure:"worker"`
 }
 
+// UIDSnowflakeStaticConfig 静态 Snowflake 节点（配置文件中的 node_id）。
+type UIDSnowflakeStaticConfig struct {
+	NodeID int64 `mapstructure:"node_id"`
+}
+
+// UIDRedisSnowflakeConfig 基于 Redis 租约的动态 Snowflake。
+type UIDRedisSnowflakeConfig struct {
+	// Redis 为 cdao 中 Redis 实例名，空则使用 "default"。
+	Redis string `mapstructure:"redis"`
+	// KeyPrefix 对应 cuid.WithRedisKeyPrefix，空则使用 cuid 包默认值。
+	KeyPrefix string `mapstructure:"key_prefix"`
+	// HeartbeatEvery、LeaseTTL 需同时大于 0 才会传给 cuid.WithHeartbeat；否则用 cuid 默认心跳与租约。
+	HeartbeatEvery time.Duration `mapstructure:"heartbeat_every"`
+	LeaseTTL       time.Duration `mapstructure:"lease_ttl"`
+	// MaxNodeExclusive 大于 0 时传给 cuid.WithMaxNode。
+	MaxNodeExclusive int `mapstructure:"max_node_exclusive"`
+}
+
+// UIDConfig 分布式 ID 配置，配合 cfx.ProvideUID*FromConfig；nil 表示不在配置中声明。
+type UIDConfig struct {
+	SnowflakeStatic *UIDSnowflakeStaticConfig `mapstructure:"snowflake_static"`
+	RedisSnowflake  *UIDRedisSnowflakeConfig  `mapstructure:"redis_snowflake"`
+}
+
 // CronConfig 定时任务调度器配置。
 type CronConfig struct {
 	// Timezone 任务调度时区，默认 "Asia/Shanghai"。
@@ -265,6 +289,7 @@ type Config[T any] struct {
 	Otel       *OtelConfig       `mapstructure:"otel"`
 	DAO        *DAOConfig        `mapstructure:"dao"`
 	Cron       *CronConfig       `mapstructure:"cron"`
+	UID        *UIDConfig        `mapstructure:"uid"`
 	Temporal   *TemporalConfig   `mapstructure:"temporal"`
 	App        T                 `mapstructure:"app"`
 }
