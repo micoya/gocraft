@@ -255,27 +255,6 @@ type DAOConfig struct {
 	Mongo         map[string]MongoConfig         `mapstructure:"mongo"`
 }
 
-// DynProviderConfig 单个动态配置 provider 的声明。
-type DynProviderConfig struct {
-	// Type provider 类型，需 import 对应子包以注册工厂函数。
-	// 内置可选值："redis"、"db"。
-	Type string `mapstructure:"type"`
-	// Name 对应 dao 中同类型资源的实例名，默认 "default"。
-	// 例如 type=redis, name=default 对应 dao.redis.default。
-	Name string `mapstructure:"name"`
-	// Key 配置在存储中的 key。
-	// redis 类型：Redis key 名称；db 类型：dynamic_configs 表的 key 列值。
-	Key string `mapstructure:"key"`
-	// PollInterval 轮询间隔，默认 30s。
-	PollInterval time.Duration `mapstructure:"poll_interval"`
-}
-
-// DynConfig 动态配置声明，对应配置文件中的 dynamic 块。
-type DynConfig struct {
-	// Provider 动态配置 provider 声明，同一应用只允许使用一个 provider。
-	Provider *DynProviderConfig `mapstructure:"provider"`
-}
-
 // Config 应用总配置。T 为各业务自定义的扩展配置，对应配置文件中的 app 块。
 // 不需要扩展配置时使用 Config[struct{}] 或直接调用 Load[struct{}]。
 type Config[T any] struct {
@@ -287,11 +266,7 @@ type Config[T any] struct {
 	DAO        *DAOConfig        `mapstructure:"dao"`
 	Cron       *CronConfig       `mapstructure:"cron"`
 	Temporal   *TemporalConfig   `mapstructure:"temporal"`
-	Dynamic    *DynConfig        `mapstructure:"dynamic"`
 	App        T                 `mapstructure:"app"`
-
-	// v 保存内部 viper 实例，供 Manager 热更新时复用，不参与序列化。
-	v *viper.Viper
 }
 
 // Load 从配置文件和环境变量加载配置，优先级：默认值 < 配置文件 < 环境变量。
@@ -332,7 +307,6 @@ func Load[T any](_ context.Context, opts ...Option) (*Config[T], error) {
 	if err := v.Unmarshal(cfg); err != nil {
 		return nil, fmt.Errorf("config: unmarshal: %w", err)
 	}
-	cfg.v = v
 
 	return cfg, nil
 }
