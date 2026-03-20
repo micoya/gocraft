@@ -9,7 +9,9 @@
 //   - fanout exchange 保证所有不同 group（队列）各自收到完整消息副本
 //   - At-least-once 语义：handler 成功返回后才 ack 消息
 //   - 支持 deflate 消息体压缩（WithCompress）
-//   - 支持 W3C TraceContext 跨进程传播（WithTracing）
+//   - 始终启用 W3C TraceContext 跨进程传播：Publish 注入 traceparent/tracestate，
+//     Subscribe 提取后以 Link 关联 producer span（符合 OTel Messaging Semantic Conventions）。
+//     未配置 TracerProvider 时全局默认为 noop，几乎零开销。
 package rabbitmq
 
 import (
@@ -29,10 +31,8 @@ import (
 )
 
 const (
-	headerTraceparent = "traceparent"
-	headerTracestate  = "tracestate"
-	headerCompress    = "x-compress"
-	compressFlag      = "deflate"
+	headerCompress = "x-compress"
+	compressFlag   = "deflate"
 
 	tracerName = "cpubsub/rabbitmq"
 )
@@ -42,19 +42,11 @@ type Option func(*options)
 
 type options struct {
 	compress bool
-	tracing  bool
 }
 
 // WithCompress 启用 deflate 消息体压缩，适用于消息体较大的场景。
 func WithCompress(on bool) Option {
 	return func(o *options) { o.compress = on }
-}
-
-// WithTracing 启用 OTel 分布式追踪。
-// 启用后 Publish 注入 W3C traceparent/tracestate 到消息 Header，
-// Subscribe 自动提取并创建 consumer span，生命周期覆盖 handler 执行全程。
-func WithTracing(on bool) Option {
-	return func(o *options) { o.tracing = on }
 }
 
 type pubsub struct {
@@ -94,24 +86,21 @@ func (p *pubsub) declareExchange(ch *amqp.Channel, topic string) error {
 }
 
 func (p *pubsub) Publish(ctx context.Context, topic string, body string) (msgID string, err error) {
-	if p.opts.tracing {
-		var span trace.Span
-		ctx, span = otel.Tracer(tracerName).Start(ctx, "publish "+topic,
-			trace.WithSpanKind(trace.SpanKindProducer),
-			trace.WithAttributes(
-				attribute.String("messaging.system", "rabbitmq"),
-				attribute.String("messaging.destination.name", topic),
-				attribute.String("messaging.operation", "publish"),
-			),
-		)
-		defer func() {
-			if err != nil {
-				span.RecordError(err)
-				span.SetStatus(codes.Error, err.Error())
-			}
-			span.End()
-		}()
-	}
+	ctx, span := otel.Tracer(tracerName).Start(ctx, "publish "+topic,
+		trace.WithSpanKind(trace.SpanKindProducer),
+		trace.WithAttributes(
+			attribute.String("messaging.system", "rabbitmq"),
+			attribute.String("messaging.destination.name", topic),
+			attribute.String("messaging.operation", "publish"),
+		),
+	)
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
 
 	ch, err := p.channel()
 	if err != nil {
@@ -134,10 +123,9 @@ func (p *pubsub) Publish(ctx context.Context, topic string, body string) (msgID 
 		headers[headerCompress] = compressFlag
 	}
 
-	if p.opts.tracing {
-		carrier := &amqpCarrier{t: headers}
-		otel.GetTextMapPropagator().Inject(ctx, carrier)
-	}
+	// 始终注入 trace context，消费端凭此建立 link 串联 trace。
+	// 未配置 TracerProvider 时 propagator 为 noop，写入为空操作。
+	otel.GetTextMapPropagator().Inject(ctx, &amqpCarrier{t: headers})
 
 	publishing := amqp.Publishing{
 		ContentType:  "text/plain",
@@ -201,31 +189,35 @@ func (p *pubsub) Subscribe(ctx context.Context, topic, group, consumer string, h
 }
 
 func (p *pubsub) dispatch(ctx context.Context, topic, group string, d amqp.Delivery, handler cpubsub.Handler) (err error) {
-	msgCtx := ctx
+	// 从消息头提取 producer 的 span context，通过 Link 关联而非 parent-child。
+	// OTel Messaging Semantic Conventions：异步 pub/sub 的 consumer span 应与
+	// producer span 建立 Link，两者各自隶属独立的 trace，避免跨进程合并 trace tree。
+	producerSpanCtx := trace.SpanContextFromContext(
+		otel.GetTextMapPropagator().Extract(ctx, &amqpCarrier{t: d.Headers}),
+	)
 
-	if p.opts.tracing {
-		carrier := &amqpCarrier{t: d.Headers}
-		msgCtx = otel.GetTextMapPropagator().Extract(ctx, carrier)
-
-		var span trace.Span
-		msgCtx, span = otel.Tracer(tracerName).Start(msgCtx, "process "+topic,
-			trace.WithSpanKind(trace.SpanKindConsumer),
-			trace.WithAttributes(
-				attribute.String("messaging.system", "rabbitmq"),
-				attribute.String("messaging.destination.name", topic),
-				attribute.String("messaging.consumer.group.name", group),
-				attribute.String("messaging.message.id", d.MessageId),
-				attribute.String("messaging.operation", "process"),
-			),
-		)
-		defer func() {
-			if err != nil {
-				span.RecordError(err)
-				span.SetStatus(codes.Error, err.Error())
-			}
-			span.End()
-		}()
+	spanOpts := []trace.SpanStartOption{
+		trace.WithSpanKind(trace.SpanKindConsumer),
+		trace.WithAttributes(
+			attribute.String("messaging.system", "rabbitmq"),
+			attribute.String("messaging.destination.name", topic),
+			attribute.String("messaging.consumer.group.name", group),
+			attribute.String("messaging.message.id", d.MessageId),
+			attribute.String("messaging.operation", "process"),
+		),
 	}
+	if producerSpanCtx.IsValid() {
+		spanOpts = append(spanOpts, trace.WithLinks(trace.Link{SpanContext: producerSpanCtx}))
+	}
+
+	msgCtx, span := otel.Tracer(tracerName).Start(ctx, "process "+topic, spanOpts...)
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
 
 	body, decErr := p.decodeBody(d)
 	if decErr != nil {

@@ -1,3 +1,17 @@
+// Package redis 提供基于 Redis Stream 的 PubSub 实现。
+//
+// 发布/订阅语义：
+//   - topic → Stream KEY（加前缀，默认 "channel:<topic>"）
+//   - group → Consumer Group 名
+//   - consumer → Consumer 名
+//
+// 特性：
+//   - At-least-once 语义：handler 成功返回后才 XACK
+//   - 启动时先消费 pending 消息，处理完后再消费新消息
+//   - 支持 deflate 压缩（WithCompress）
+//   - 始终启用 W3C TraceContext 跨进程传播：Publish 注入 traceparent/tracestate 到消息字段，
+//     Subscribe 提取后以 Link 关联 producer span（符合 OTel Messaging Semantic Conventions）。
+//     未配置 TracerProvider 时全局默认为 noop，几乎零开销。
 package redis
 
 import (
@@ -23,11 +37,9 @@ const (
 	defaultPrefix = "channel:"
 	defaultTTL    = 7 * 24 * time.Hour
 
-	fieldBody       = "b"
-	fieldCompress   = "c"
-	fieldTraceparent = "tp"
-	fieldTracestate  = "ts"
-	compressFlag    = "1"
+	fieldBody     = "b"
+	fieldCompress = "c"
+	compressFlag  = "1"
 
 	tracerName = "cpubsub/redis"
 )
@@ -39,7 +51,6 @@ type options struct {
 	prefix   string
 	ttl      time.Duration
 	compress bool
-	tracing  bool
 }
 
 // WithPrefix 设置 Stream KEY 前缀，默认 "channel:"。
@@ -57,22 +68,22 @@ func WithCompress(on bool) Option {
 	return func(o *options) { o.compress = on }
 }
 
-// WithTracing 启用 OTel 分布式追踪。
-// 启用后，Publish 时将 W3C TraceContext 注入消息字段（tp/ts），
-// Subscribe 时自动提取并创建 consumer span，使消息的完整链路可观测。
-// 注意：同一 topic 的生产者和消费者需同时启用才能获得完整链路。
-func WithTracing(on bool) Option {
-	return func(o *options) { o.tracing = on }
+// streamCarrier 将 Redis Stream XMessage values 适配为 OTel TextMapCarrier，
+// 让 propagator 直接操作消息字段，无需手动映射 header 名。
+type streamCarrier struct{ values map[string]any }
+
+func (c streamCarrier) Get(key string) string {
+	if v, ok := c.values[key]; ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
 }
-
-// streamCarrier 将 W3C TraceContext header 名映射到 Redis Stream 消息字段。
-type streamCarrier map[string]string
-
-func (c streamCarrier) Get(key string) string      { return c[key] }
-func (c streamCarrier) Set(key, val string)         { c[key] = val }
+func (c streamCarrier) Set(key, val string)  { c.values[key] = val }
 func (c streamCarrier) Keys() []string {
-	keys := make([]string, 0, len(c))
-	for k := range c {
+	keys := make([]string, 0, len(c.values))
+	for k := range c.values {
 		keys = append(keys, k)
 	}
 	return keys
@@ -101,24 +112,21 @@ func (p *pubsub) key(topic string) string {
 }
 
 func (p *pubsub) Publish(ctx context.Context, topic string, body string) (msgID string, err error) {
-	if p.opts.tracing {
-		var span trace.Span
-		ctx, span = otel.Tracer(tracerName).Start(ctx, "publish "+topic,
-			trace.WithSpanKind(trace.SpanKindProducer),
-			trace.WithAttributes(
-				attribute.String("messaging.system", "redis"),
-				attribute.String("messaging.destination.name", topic),
-				attribute.String("messaging.operation", "publish"),
-			),
-		)
-		defer func() {
-			if err != nil {
-				span.RecordError(err)
-				span.SetStatus(codes.Error, err.Error())
-			}
-			span.End()
-		}()
-	}
+	ctx, span := otel.Tracer(tracerName).Start(ctx, "publish "+topic,
+		trace.WithSpanKind(trace.SpanKindProducer),
+		trace.WithAttributes(
+			attribute.String("messaging.system", "redis"),
+			attribute.String("messaging.destination.name", topic),
+			attribute.String("messaging.operation", "publish"),
+		),
+	)
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
 
 	key := p.key(topic)
 	values := map[string]any{fieldBody: body}
@@ -132,16 +140,9 @@ func (p *pubsub) Publish(ctx context.Context, topic string, body string) (msgID 
 		values[fieldCompress] = compressFlag
 	}
 
-	if p.opts.tracing {
-		carrier := streamCarrier{}
-		otel.GetTextMapPropagator().Inject(ctx, carrier)
-		if v := carrier["traceparent"]; v != "" {
-			values[fieldTraceparent] = v
-		}
-		if v := carrier["tracestate"]; v != "" {
-			values[fieldTracestate] = v
-		}
-	}
+	// 始终注入 trace context，消费端凭此建立 link 串联 trace。
+	// 未配置 TracerProvider 时 propagator 为 noop，写入为空操作。
+	otel.GetTextMapPropagator().Inject(ctx, streamCarrier{values})
 
 	pipe := p.client.Pipeline()
 	xadd := pipe.XAdd(ctx, &goredis.XAddArgs{
@@ -215,38 +216,37 @@ func (p *pubsub) Subscribe(ctx context.Context, topic, group, consumer string, h
 	}
 }
 
-// dispatch 处理单条消息：如果启用了 tracing，则提取远端 span context 并创建 consumer span。
+// dispatch 处理单条消息：提取 producer span context，通过 Link 关联后创建 consumer span。
 func (p *pubsub) dispatch(ctx context.Context, topic, group, key string, raw goredis.XMessage, msg cpubsub.Message, handler cpubsub.Handler) (err error) {
-	msgCtx := ctx
-	if p.opts.tracing {
-		carrier := streamCarrier{}
-		if v, _ := raw.Values[fieldTraceparent].(string); v != "" {
-			carrier["traceparent"] = v
-		}
-		if v, _ := raw.Values[fieldTracestate].(string); v != "" {
-			carrier["tracestate"] = v
-		}
-		msgCtx = otel.GetTextMapPropagator().Extract(ctx, carrier)
+	// 从消息字段提取 producer 的 span context，通过 Link 关联而非 parent-child。
+	// OTel Messaging Semantic Conventions：异步 pub/sub 的 consumer span 应与
+	// producer span 建立 Link，两者各自隶属独立的 trace，避免跨进程合并 trace tree。
+	producerSpanCtx := trace.SpanContextFromContext(
+		otel.GetTextMapPropagator().Extract(ctx, streamCarrier{raw.Values}),
+	)
 
-		var span trace.Span
-		msgCtx, span = otel.Tracer(tracerName).Start(msgCtx, "process "+topic,
-			trace.WithSpanKind(trace.SpanKindConsumer),
-			trace.WithAttributes(
-				attribute.String("messaging.system", "redis"),
-				attribute.String("messaging.destination.name", topic),
-				attribute.String("messaging.consumer.group.name", group),
-				attribute.String("messaging.message.id", raw.ID),
-				attribute.String("messaging.operation", "process"),
-			),
-		)
-		defer func() {
-			if err != nil {
-				span.RecordError(err)
-				span.SetStatus(codes.Error, err.Error())
-			}
-			span.End()
-		}()
+	spanOpts := []trace.SpanStartOption{
+		trace.WithSpanKind(trace.SpanKindConsumer),
+		trace.WithAttributes(
+			attribute.String("messaging.system", "redis"),
+			attribute.String("messaging.destination.name", topic),
+			attribute.String("messaging.consumer.group.name", group),
+			attribute.String("messaging.message.id", raw.ID),
+			attribute.String("messaging.operation", "process"),
+		),
 	}
+	if producerSpanCtx.IsValid() {
+		spanOpts = append(spanOpts, trace.WithLinks(trace.Link{SpanContext: producerSpanCtx}))
+	}
+
+	msgCtx, span := otel.Tracer(tracerName).Start(ctx, "process "+topic, spanOpts...)
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
 
 	if err = handler(msgCtx, msg); err != nil {
 		return err

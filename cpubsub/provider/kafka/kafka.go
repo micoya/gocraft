@@ -8,7 +8,9 @@
 // 特性：
 //   - At-least-once 语义：handler 成功返回后才提交 offset
 //   - 支持 deflate 压缩（WithCompress）
-//   - 支持 W3C TraceContext 跨进程传播（WithTracing）
+//   - 始终启用 W3C TraceContext 跨进程传播：Publish 注入 traceparent/tracestate，
+//     Subscribe 提取后以 Link 关联 producer span（符合 OTel Messaging Semantic Conventions）。
+//     未配置 TracerProvider 时全局默认为 noop，几乎零开销。
 //   - Writer 按 topic 缓存，复用连接
 package kafka
 
@@ -31,10 +33,8 @@ import (
 )
 
 const (
-	headerTraceparent = "traceparent"
-	headerTracestate  = "tracestate"
-	headerCompress    = "x-compress"
-	compressFlag      = "deflate"
+	headerCompress = "x-compress"
+	compressFlag   = "deflate"
 
 	tracerName = "cpubsub/kafka"
 )
@@ -44,19 +44,11 @@ type Option func(*options)
 
 type options struct {
 	compress bool
-	tracing  bool
 }
 
 // WithCompress 启用 deflate 消息体压缩，适用于消息体较大的场景。
 func WithCompress(on bool) Option {
 	return func(o *options) { o.compress = on }
-}
-
-// WithTracing 启用 OTel 分布式追踪。
-// 启用后 Publish 注入 W3C traceparent/tracestate 到消息 Header，
-// Subscribe 自动提取并创建 consumer span，生命周期覆盖 handler 执行全程。
-func WithTracing(on bool) Option {
-	return func(o *options) { o.tracing = on }
 }
 
 type pubsub struct {
@@ -92,24 +84,21 @@ func (p *pubsub) writer(topic string) *kafkago.Writer {
 }
 
 func (p *pubsub) Publish(ctx context.Context, topic string, body string) (msgID string, err error) {
-	if p.opts.tracing {
-		var span trace.Span
-		ctx, span = otel.Tracer(tracerName).Start(ctx, "publish "+topic,
-			trace.WithSpanKind(trace.SpanKindProducer),
-			trace.WithAttributes(
-				attribute.String("messaging.system", "kafka"),
-				attribute.String("messaging.destination.name", topic),
-				attribute.String("messaging.operation", "publish"),
-			),
-		)
-		defer func() {
-			if err != nil {
-				span.RecordError(err)
-				span.SetStatus(codes.Error, err.Error())
-			}
-			span.End()
-		}()
-	}
+	ctx, span := otel.Tracer(tracerName).Start(ctx, "publish "+topic,
+		trace.WithSpanKind(trace.SpanKindProducer),
+		trace.WithAttributes(
+			attribute.String("messaging.system", "kafka"),
+			attribute.String("messaging.destination.name", topic),
+			attribute.String("messaging.operation", "publish"),
+		),
+	)
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
 
 	headers := make([]kafkago.Header, 0, 3)
 
@@ -122,13 +111,11 @@ func (p *pubsub) Publish(ctx context.Context, topic string, body string) (msgID 
 		headers = append(headers, kafkago.Header{Key: headerCompress, Value: []byte(compressFlag)})
 	}
 
-	if p.opts.tracing {
-		carrier := make(headerCarrier, 0, 2)
-		otel.GetTextMapPropagator().Inject(ctx, &carrier)
-		for _, h := range carrier {
-			headers = append(headers, h)
-		}
-	}
+	// 始终注入 trace context，消费端凭此建立 link 串联 trace。
+	// 未配置 TracerProvider 时 propagator 为 noop，写入为空操作。
+	carrier := make(headerCarrier, 0, 2)
+	otel.GetTextMapPropagator().Inject(ctx, &carrier)
+	headers = append(headers, carrier...)
 
 	msg := kafkago.Message{
 		Value:   []byte(body),
@@ -171,35 +158,37 @@ func (p *pubsub) Subscribe(ctx context.Context, topic, group, consumer string, h
 }
 
 func (p *pubsub) dispatch(ctx context.Context, topic, group string, reader *kafkago.Reader, raw kafkago.Message, handler cpubsub.Handler) (err error) {
-	msgCtx := ctx
+	// 从消息头提取 producer 的 span context，通过 Link 关联而非 parent-child。
+	// OTel Messaging Semantic Conventions：异步 pub/sub 的 consumer span 应与
+	// producer span 建立 Link，两者各自隶属独立的 trace，避免跨进程合并 trace tree。
+	carrier := headerCarrier(raw.Headers)
+	producerSpanCtx := trace.SpanContextFromContext(
+		otel.GetTextMapPropagator().Extract(ctx, &carrier),
+	)
 
-	if p.opts.tracing {
-		carrier := make(headerCarrier, 0, len(raw.Headers))
-		for _, h := range raw.Headers {
-			carrier = append(carrier, h)
-		}
-		msgCtx = otel.GetTextMapPropagator().Extract(ctx, &carrier)
-
-		var span trace.Span
-		msgCtx, span = otel.Tracer(tracerName).Start(msgCtx, "process "+topic,
-			trace.WithSpanKind(trace.SpanKindConsumer),
-			trace.WithAttributes(
-				attribute.String("messaging.system", "kafka"),
-				attribute.String("messaging.destination.name", topic),
-				attribute.String("messaging.consumer.group.name", group),
-				attribute.Int64("messaging.kafka.offset", raw.Offset),
-				attribute.Int("messaging.kafka.partition", raw.Partition),
-				attribute.String("messaging.operation", "process"),
-			),
-		)
-		defer func() {
-			if err != nil {
-				span.RecordError(err)
-				span.SetStatus(codes.Error, err.Error())
-			}
-			span.End()
-		}()
+	spanOpts := []trace.SpanStartOption{
+		trace.WithSpanKind(trace.SpanKindConsumer),
+		trace.WithAttributes(
+			attribute.String("messaging.system", "kafka"),
+			attribute.String("messaging.destination.name", topic),
+			attribute.String("messaging.consumer.group.name", group),
+			attribute.Int64("messaging.kafka.offset", raw.Offset),
+			attribute.Int("messaging.kafka.partition", raw.Partition),
+			attribute.String("messaging.operation", "process"),
+		),
 	}
+	if producerSpanCtx.IsValid() {
+		spanOpts = append(spanOpts, trace.WithLinks(trace.Link{SpanContext: producerSpanCtx}))
+	}
+
+	msgCtx, span := otel.Tracer(tracerName).Start(ctx, "process "+topic, spanOpts...)
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
 
 	body, decErr := p.decodeBody(raw)
 	if decErr != nil {
