@@ -190,7 +190,11 @@ func ProvideCron[T any]() fx.Option {
 			opts = append(opts, ccron.WithTimezone(cronCfg.Timezone))
 		}
 		if d.Locker != nil && cronCfg != nil && cronCfg.Distributed {
-			opts = append(opts, ccron.WithLocker(clockerLockerAdapter{d.Locker}, 0))
+			lockTTL := 5 * time.Minute
+			if cronCfg.LockTTL > 0 {
+				lockTTL = cronCfg.LockTTL
+			}
+			opts = append(opts, ccron.WithLocker(clockerLockerAdapter{d.Locker}, lockTTL))
 		}
 
 		s := ccron.New(opts...)
