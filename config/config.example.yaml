@@ -9,7 +9,7 @@ name: my_app
 env: local
 
 # ============================================================
-# 日志配置
+# 日志配置（clog）
 # ============================================================
 log:
   # 日志级别。可选：DEBUG / INFO / WARN / ERROR。默认：INFO
@@ -18,17 +18,17 @@ log:
   # 输出格式。可选：text（人类可读）/ json（结构化，适合日志采集）。默认：text
   format: text
 
-  # 输出目标。填 stdout 输出到标准输出，或填绝对文件路径写入文件。默认：stdout
+  # 输出目标。填 stdout / stderr，或填绝对文件路径以追加写入。默认：stdout
   path: stdout
 
-  # 是否在日志中附带调用栈 trace。默认：true
+  # 为 true 时，从 context / OpenTelemetry span 向日志字段注入 trace_id、span_id。默认：true
   with_trace: true
 
-  # 是否在日志中附带调用栈 source。默认：true
+  # 为 true 时，slog 在日志中附带源码位置（调用方文件与行号）。默认：true
   add_source: true
 
 # ============================================================
-# HTTP 服务配置
+# HTTP 服务配置（chttp / Gin）
 # ============================================================
 http_server:
   # 监听地址。格式：[host]:port。默认：:8080
@@ -49,7 +49,7 @@ http_server:
   # 健康检查端点路径。默认：/healthz
   health_path: /healthz
 
-  # Prometheus metrics 端点路径。默认：/metrics
+  # Prometheus metrics 端点路径（需在代码中向 chttp 注入 cotel.Provider 且 exporter 可用时才会注册）。默认：/metrics
   metrics_path: /metrics
 
   # CORS 跨域配置。整个 cors 块不填（或注释掉）表示不启用 CORS 中间件。
@@ -80,6 +80,14 @@ http_server:
   #   # 预检请求（OPTIONS）结果缓存时长
   #   max_age: 12h
 
+  # 访问日志中间件。默认开启；输出使用注入的 *slog.Logger，格式与 log 块一致。
+  access_log:
+    # 是否启用访问日志。默认：true
+    enabled: true
+
+    # 预留字段（当前中间件未单独切换格式）。默认：空
+    format: ""
+
   # pprof 性能分析配置。默认开启，仅允许本地访问。
   pprof:
     # 是否启用 pprof 端点（/debug/pprof/）。默认：true
@@ -91,49 +99,42 @@ http_server:
     # 访问 pprof 时需要携带的 Authorization 头。为空则不鉴权。默认：""
     # authorization_token: "Bearer my-secret-token"
 
-  # 访问日志配置。默认开启。
-  access_log:
-    # 是否启用访问日志。默认：true
-    enabled: true
-
-    # 输出格式。可选：text / json。默认跟随 log.format。
-    format: text
-
 # ============================================================
-# OpenTelemetry 可观测性配置
-# 整个 otel 块不填（或注释掉）表示不启用 OTel。
-# 存在 otel 块时：自动启用 Prometheus metrics 端点和 HTTP trace 中间件。
+# OpenTelemetry（cotel）
+# 整个 otel 块省略时，cotel.New 可使用零值配置；向 chttp 注入 Provider 后才会启用 otelgin、
+# HTTP 指标中间件及 /metrics 上的 Prometheus handler（取决于 exporter 是否返回非 nil handler）。
 # ============================================================
 # otel:
 #   trace:
 #     # OTLP gRPC Collector 地址。为空则不通过 OTLP 导出 trace。
 #     endpoint: "otel-collector:4317"
-#     # 是否使用非 TLS 连接（开发环境可开启）。默认：false
+#     # 是否使用非 TLS 连接（内网/开发可开启）。默认：false
 #     insecure: true
-#     # 采样率 0.0~1.0。1.0=全量采样，0.0=不采样。默认：1.0
+#     # 采样率 0.0~1.0。1.0=全量采样。默认：1.0
 #     sample_rate: 1.0
 #
 #   metric:
-#     # OTLP gRPC 推送地址。为空则仅通过 Prometheus 端点暴露指标。
+#     # OTLP gRPC 推送地址。为空则仍可仅通过 Prometheus 拉取暴露指标（由 cotel 实现决定）。
 #     endpoint: "otel-collector:4317"
 #     # 是否使用非 TLS 连接。默认：false
 #     insecure: true
 
 # ============================================================
-# 数据访问层（DAO）配置
+# 数据访问层（cdao）
 # database / redis / oss / openai / mcache / http_client /
 # rabbitmq / kafka / elasticsearch / mongo 均支持多实例，key 为自定义连接名称。
-# 各 Must() 函数省略 name 参数时默认取名为 "default" 的实例。
-# 整个 dao 块不填（或注释掉）表示不使用任何数据源。
+# 各 Must() 省略 name 时默认取名为 "default" 的实例。
+# 使用某类资源前须在代码中 blank import 对应 cdao/provider/... 完成注册。
+# 整个 dao 块不填（或注释掉）表示不在配置中声明数据源。
 # ============================================================
 # dao:
 #   database:
 #     # 默认库（gormx.Must(dao) 即取此实例）
 #     default:
 #       driver: mysql
-#       # Go MySQL DSN 格式：user:pass@tcp(host:port)/dbname?parseTime=true
+#       # Go MySQL DSN：user:pass@tcp(host:port)/dbname?parseTime=true
 #       dsn: "root:password@tcp(127.0.0.1:3306)/mydb?charset=utf8mb4&parseTime=true"
-#       # AutoMigrate 时是否禁止在数据库层面创建外键约束。默认：true（不创建外键）。
+#       # AutoMigrate 时是否禁止在数据库层面创建外键约束。nil 视为 true（不创建外键）。
 #       # disable_migrate_foreign_key: true
 #     # 从库（按需添加，gormx.Must(dao, "replica") 取用）
 #     replica:
@@ -142,7 +143,6 @@ http_server:
 #     # PostgreSQL 实例
 #     analytics:
 #       driver: postgres
-#       # Go pgx DSN 格式
 #       dsn: "host=127.0.0.1 port=5432 user=postgres password=password dbname=mydb sslmode=disable"
 #
 #   redis:
@@ -150,11 +150,11 @@ http_server:
 #     default:
 #       addr: "127.0.0.1:6379"
 #       password: ""
-#       # 使用的数据库编号（0-15）
+#       # 逻辑库编号（0-15）
 #       db: 0
 #       read_timeout: 3s
 #       write_timeout: 3s
-#     # 分布式锁专用实例（redisx.Must(dao, "lock") 取用）
+#     # 分布式锁等独立实例（redisx.Must(dao, "lock") 取用）
 #     lock:
 #       addr: "127.0.0.1:6379"
 #       password: ""
@@ -163,219 +163,153 @@ http_server:
 #       write_timeout: 3s
 #
 #   oss:
-#     # 默认 OSS 实例（ossx.Must(dao) 即取此实例）
 #     default:
-#       # OSS 服务端点，格式：https://oss-{region}.aliyuncs.com
+#       # OSS 服务端点，如 https://oss-cn-hangzhou.aliyuncs.com
 #       endpoint: "https://oss-cn-hangzhou.aliyuncs.com"
 #       access_key_id: "your-access-key-id"
 #       access_key_secret: "your-access-key-secret"
-#     # 额外 Bucket 所在地域的实例（按需添加）
 #     # backup:
 #     #   endpoint: "https://oss-cn-beijing.aliyuncs.com"
 #     #   access_key_id: "your-access-key-id"
 #     #   access_key_secret: "your-access-key-secret"
 #
 #   openai:
-#     # 默认 OpenAI 实例（openaix.Must(dao) 即取此实例）
 #     default:
 #       api_key: "sk-xxxxxxxxxxxxxxxxxxxx"
-#       # base_url 可选。为空时使用官方地址 https://api.openai.com/v1。
-#       # 填写后可接入任意 OpenAI 兼容服务（代理、DeepSeek、通义千问等）。
-#       # base_url: "https://your-proxy.example.com/v1"
-#     # 备用模型服务（按需添加）
+#       # 为空使用官方默认；可填代理或 OpenAI 兼容服务的 base URL。
+#       # base_url: "https://api.openai.com/v1"
 #     # deepseek:
 #     #   api_key: "sk-xxxxxxxxxxxxxxxxxxxx"
 #     #   base_url: "https://api.deepseek.com/v1"
 #
 #   mcache:
-#     # 默认内存缓存实例（mcachex.Must(dao) 即取此实例）
-#     # 基于 ristretto 高性能并发缓存
+#     # 基于 ristretto（mcachex.Must(dao)）
 #     default:
-#       # 频率计数器数量，建议为预期最大缓存条目数的 10 倍。默认：10000000
+#       # 频率计数器数量，建议约为预期最大条目数的 10 倍。默认：10000000
 #       num_counters: 10000000
-#       # 缓存最大容量（字节）。默认：536870912（512MB）
+#       # 最大占用字节数。默认：536870912（512MB）
 #       max_cost: 536870912
 #       # 写入缓冲区大小。默认：64
 #       buffer_items: 64
 #
 #   http_client:
-#     # 外部支付服务（httpclientx.Must(dao, "payment") 取用）
 #     payment:
-#       # 外部服务根地址，用于健康检查（HEAD 请求）和 OTel peer.service 属性。
-#       # 业务代码仍需自行拼接完整 URL。
+#       # 根地址：健康检查（HEAD）与 OTel peer.service；业务仍须自行拼 URL。
 #       base_url: "https://payment.internal"
-#       # 单次请求完整超时（含重定向）。默认：30s
 #       timeout: 10s
-#       # 全局最大空闲连接数。默认：100
 #       max_idle_conns: 100
-#       # 每个 host 的最大连接数（0=不限）。默认：0
 #       max_conns_per_host: 20
-#       # 空闲连接保活超时。默认：90s
 #       idle_conn_timeout: 90s
-#       # 跳过 TLS 证书校验，仅用于开发/内网测试环境。默认：false
 #       # tls_skip_verify: false
 #
-#       # 重试配置（nil 或不填表示不重试）
 #       retry:
-#         # 最大重试次数（不含首次请求）。默认：3
 #         max_attempts: 3
-#         # 首次重试前最小等待时间（指数退避起点）。默认：100ms
 #         wait_min: 100ms
-#         # 重试等待时间上限。默认：2s
 #         wait_max: 2s
 #
-#       # 熔断器配置（nil 或不填表示不启用熔断）
 #       circuit_breaker:
-#         # 半开状态下允许通过的最大探测请求数。默认：1
 #         max_requests: 1
-#         # 统计窗口时长，窗口内连续失败达阈值则熔断。默认：60s
 #         interval: 60s
-#         # 熔断持续时间（Open→HalfOpen）。默认：30s
 #         timeout: 30s
-#         # 连续失败次数阈值，达到后进入熔断状态。默认：5
 #         threshold: 5
 #
 #   rabbitmq:
-#     # 默认 RabbitMQ 实例（rabbitmqx.Must(dao) 即取此实例）
 #     default:
-#       # AMQP 连接地址。格式：amqp://user:pass@host:5672/vhost
+#       # amqp://user:pass@host:5672/vhost
 #       url: "amqp://guest:guest@127.0.0.1:5672/"
-#     # 独立 vhost 实例（rabbitmqx.Must(dao, "events") 取用）
 #     # events:
 #     #   url: "amqp://user:pass@127.0.0.1:5672/events"
 #
 #   kafka:
-#     # 默认 Kafka 集群（kafkax.Must(dao) 即取此实例）
 #     default:
-#       # Broker 地址列表，至少填一个，多个 broker 提升可用性
 #       brokers:
 #         - "127.0.0.1:9092"
-#       # 拨号超时。默认：10s
 #       dial_timeout: 10s
-#     # 另一套 Kafka 集群（按需添加）
 #     # analytics:
 #     #   brokers:
 #     #     - "kafka-analytics:9092"
-#     #     - "kafka-analytics:9093"
 #
 #   elasticsearch:
-#     # 默认 ES 集群（elasticsearchx.Must(dao) 即取此实例）
 #     default:
-#       # 节点地址列表，多节点时客户端自动轮询
 #       addresses:
 #         - "http://127.0.0.1:9200"
-#       # HTTP Basic Auth（与 api_key 二选一，api_key 优先级更高）
 #       username: ""
 #       password: ""
-#       # API Key 认证（推荐生产环境使用）
+#       # api_key 优先于 username/password
 #       # api_key: "base64encodedkey=="
-#       # Elastic Cloud 部署 ID（使用 Elastic Cloud 时填写，会覆盖 addresses）
+#       # Elastic Cloud
 #       # cloud_id: "my-deployment:dXMtZWFzdC0x..."
-#     # 日志分析专用集群（按需添加）
-#     # logs:
-#     #   addresses:
-#     #     - "http://es-logs:9200"
 #
 #   mongo:
-#     # 默认 MongoDB 实例（mongox.Must(dao) 即取此实例）
 #     default:
-#       # MongoDB 连接字符串。支持单节点、副本集、分片集群
 #       uri: "mongodb://127.0.0.1:27017"
-#       # 建立连接的超时时间。默认：10s
 #       connect_timeout: 10s
-#     # 副本集实例（mongox.Must(dao, "rs") 取用）
 #     # rs:
 #     #   uri: "mongodb://user:pass@mongo1:27017,mongo2:27017,mongo3:27017/mydb?replicaSet=rs0&authSource=admin"
 #     #   connect_timeout: 10s
 
 # ============================================================
-# Temporal 工作流引擎配置
-# 整个 temporal 块不填（或注释掉）表示不使用 Temporal。
-# ============================================================
-# temporal:
-#   # Temporal Server 地址。本地开发默认 localhost:7233。
-#   # Temporal Cloud 格式：<namespace>.<accountId>.tmprl.cloud:7233
-#   host_port: "localhost:7233"
-#
-#   # Temporal 命名空间，默认 "default"。
-#   # Temporal Cloud 格式：<namespace>.<accountId>
-#   namespace: "default"
-#
-#   # === 连接认证方案（三选一）===
-#
-#   # 方案 A：Temporal Cloud API Key（最简单，推荐 Cloud 用户）
-#   # 在 cloud.temporal.io → API Keys 中生成
-#   # api_key: "your-temporal-cloud-api-key"
-#
-#   # 方案 B：Temporal Cloud mTLS（旧版 Cloud 或需要证书的场景）
-#   # tls:
-#   #   cert_file: "/path/to/client.pem"
-#   #   key_file:  "/path/to/client.key"
-#   #   # server_name 一般不需要，自动从 host_port 提取
-#
-#   # 方案 C：自托管 TLS（有自签名 CA 时）
-#   # tls:
-#   #   ca_file: "/path/to/ca.pem"
-#   #   # insecure_skip_verify: false  # 仅限开发环境
-#
-#   # Worker 全局并发配置（各 Worker 可在代码中独立覆盖）
-#   worker:
-#     # 最大并发 Activity 执行数。默认：100
-#     max_concurrent_activity_executors: 100
-#     # 最大并发 Workflow Task 执行数。默认：100
-#     max_concurrent_workflow_task_executors: 100
-#     # 最大并发 Local Activity 执行数。默认：100
-#     max_concurrent_local_activity_executors: 100
-
-# ============================================================
-# 定时任务配置（ccron 调度器）
-# 整个 cron 块不填（或注释掉）表示使用默认配置。
+# 定时任务（ccron）
+# 整个 cron 块省略时使用 setDefaults（时区 Asia/Shanghai 等）。
+# distributed 为 true 时，手写组装需自行 ccron.WithLocker；cfx 下需同时提供 *clocker.Locker（见 cfx.ProvideCron）。
+# lock_redis 供业务用 redisx.Must(dao, cfg.Cron.LockRedis) 创建 Locker 时使用。默认：default
 # ============================================================
 # cron:
-#   # 调度时区。默认：Asia/Shanghai
 #   timezone: "Asia/Shanghai"
-#
-#   # 是否启用分布式防重复执行（多实例部署时只有一个节点执行）。默认：false
-#   # 启用时需通过 ccron.WithLocker(clocker.New(redisClient), cfg.Cron.LockTTL) 注入分布式锁。
 #   distributed: false
-#
-#   # 分布式模式下使用的 Redis 实例名（对应 dao.redis 中的 key）。默认：default
 #   lock_redis: default
-#
-#   # 每个任务分布式锁的持有时长，应略大于任务预期最长执行时间。默认：5m
 #   lock_ttl: 5m
 
 # ============================================================
-# 动态配置 Provider（对应 Config[T].Dynamic 字段）
-#
-# 声明后需在代码中 blank import 对应子包并调用 NewManagerFromDAO：
-#   import _ "github.com/micoya/gocraft/config/dynprovider/redis"
-#   import _ "github.com/micoya/gocraft/config/dynprovider/db"
-#   mgr, _ := config.NewManagerFromDAO(ctx, cfg, dao)
-#
-# providers 按声明顺序加载，后者优先级更高（可叠加多个 provider）。
-# 动态配置仅作用于 app 块，基础设施配置（dao/log/http_server 等）不参与热更新。
+# 分布式 ID（配合 cfx.ProvideUID*FromConfig）
+# 整个 uid 块省略表示不在配置里声明；snowflake_static 与 redis_snowflake 按业务二选一（对应不同 Provide 函数）。
 # ============================================================
-# dynamic:
-#   provider:
-#     # type 可选值："redis" 或 "db"（需 blank import 对应子包）
+# uid:
+#   # 静态 Snowflake 节点 ID（0~1023，取决于 snowflake 库约定）
+#   snowflake_static:
+#     node_id: 1
 #
-#     # Redis provider：从指定 key 读取 JSON 补丁，轮询检测变更
-#     type: redis
-#     name: default          # 对应 dao.redis.default
-#     key: myapp:dynconfig   # Redis key，存储 JSON 格式的 app 配置补丁
-#     poll_interval: 30s
-#
-#     # DB provider：从 dynamic_configs 表读取 JSON 补丁，自动建表，轮询检测变更
-#     # type: db
-#     # name: default        # 对应 dao.database.default（支持 MySQL / PostgreSQL）
-#     # key: app             # dynamic_configs 表的 key 列值
-#     # poll_interval: 30s
+#   # 基于 Redis 租约抢占 node 的 Snowflake（需已配置 dao.redis）
+#   redis_snowflake:
+#     # dao.redis 中的实例名，空等价于 "default"
+#     redis: default
+#     # 对应 cuid.WithRedisKeyPrefix，空则用包内默认前缀
+#     key_prefix: "app:sf:"
+#     # 同时大于 0 时才会传给 cuid.WithHeartbeat；否则用库默认心跳与租约
+#     heartbeat_every: 5s
+#     lease_ttl: 30s
+#     # 节点号上界（开区间），默认 1024 即合法节点 ∈ [0, 1023]
+#     max_node_exclusive: 1024
 
 # ============================================================
-# 业务自定义扩展配置（对应 Config[T] 中的 App 字段）
-# 将业务特有的配置项放在 app 块下，Load[YourAppConfig](ctx) 会自动映射到 T。
-# 不需要扩展配置时，此块可整体删除。
+# Temporal（ctemporal）
+# 整个 temporal 块省略时由 ctemporal.New 结合默认值处理；具体行为见 ctemporal 包。
+# ============================================================
+# temporal:
+#   # 本地：localhost:7233；Temporal Cloud：<namespace>.<accountId>.tmprl.cloud:7233
+#   host_port: "localhost:7233"
+#   namespace: "default"
+#
+#   # Temporal Cloud 推荐：API Key（设置后自动 TLS，一般无需再配 tls:）
+#   # api_key: "your-temporal-cloud-api-key"
+#
+#   # mTLS 或自管 CA 等：
+#   # tls:
+#   #   cert_file: "/path/to/client.pem"
+#   #   key_file: "/path/to/client.key"
+#   #   ca_file: "/path/to/ca.pem"
+#   #   server_name: ""
+#   #   insecure_skip_verify: false
+#
+#   worker:
+#     max_concurrent_activity_executors: 100
+#     max_concurrent_workflow_task_executors: 100
+#     max_concurrent_local_activity_executors: 100
+
+# ============================================================
+# 业务扩展配置（Config[T] 的 App 字段）
+# 使用 config.Load[YourAppConfig](ctx) 时，yaml 中 app 块映射到 T。
+# 不需要扩展时整段可删除。
 # ============================================================
 # app:
 #   some_key: some_value
