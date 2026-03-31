@@ -311,7 +311,7 @@ type Config[T any] struct {
 	Cron       *CronConfig                  `mapstructure:"cron"`
 	UID        *UIDConfig                   `mapstructure:"uid"`
 	Limiter    map[string]LimiterItemConfig `mapstructure:"limiter"`
-	Temporal   *TemporalConfig   `mapstructure:"temporal"`
+	Temporal   *TemporalConfig              `mapstructure:"temporal"`
 	App        T                 `mapstructure:"app"`
 }
 

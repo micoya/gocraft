@@ -33,7 +33,6 @@
 | **ccron** | 基于 `robfig/cron` 的调度：任务级 OTel span、panic 恢复、可选**分布式锁**避免多副本重复跑、时区可配置。 |
 | **cpubsub** | 发布/订阅抽象（发布、消费组式订阅）；实现位于子包 **Redis / Kafka / RabbitMQ**。 |
 | **ctemporal** | Temporal 客户端与 Worker 的**胶水封装**：配置驱动连接、TLS、slog、多 Worker 注册与统一 `Run`；业务 Workflow/Activity 仍用官方 SDK 原生写法。 |
-| **climiter** | 基于 mennanov/limiters 的分布式限流：滑动窗口、固定窗口、令牌桶（Redis）及单机内存版；`limiter.Limit(ctx, key)` 一行调用，支持 per-key 独立计数，工厂函数按需选择算法。 |
 | **cworker** | 带并发上限的后台任务池：信号量控并发、panic 恢复、`Stop` 等待在途任务结束。 |
 | **cuid** | 分布式 ID：**UUID v4**、**Snowflake**（静态节点或基于 Redis 租约的动态节点）、**Sonyflake**（默认结合本机私网 IPv4 派生机器号）。 |
 

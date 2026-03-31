@@ -310,11 +310,9 @@ func TestNewFromConfig_MultipleInstances(t *testing.T) {
 		t.Fatalf("NewFromConfig: %v", err)
 	}
 
-	// lax 第一次应通过
 	if _, err := reg.Must("lax").Limit(ctx, "k"); err != nil {
 		t.Errorf("lax first request: %v", err)
 	}
-	// strict 第一次通过，第二次被限流
 	reg.Must("strict").Limit(ctx, "k") //nolint
 	_, err = reg.Must("strict").Limit(ctx, "k")
 	if !errors.Is(err, ErrRateLimited) {
@@ -365,7 +363,6 @@ func TestNewFromConfig_DefaultAlgoIsSlidingWindow(t *testing.T) {
 	client, _ := newTestClient(t)
 	ctx := context.Background()
 
-	// Algo 为空时默认 sliding_window
 	cfg := map[string]config.LimiterItemConfig{
 		"implicit": {Rate: 2, Window: time.Minute},
 	}
@@ -384,13 +381,12 @@ func TestNewFromConfig_DefaultAlgoIsSlidingWindow(t *testing.T) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 通用行为：WithBurst 对非令牌桶工厂不生效但不报错
+// 通用行为：WithBurst 对非令牌桶工厂无语义意义但不报错
 // ─────────────────────────────────────────────────────────────────────────────
 
 func TestSlidingWindowRedis_WithBurstIgnored(t *testing.T) {
 	client, _ := newTestClient(t)
 	ctx := context.Background()
-	// WithBurst 对 SlidingWindow 无语义意义，但不应 panic 或报错
 	limiter := NewSlidingWindowRedis(client, 2, time.Minute, WithBurst(99))
 
 	for range 2 {

@@ -78,7 +78,6 @@ type Limiter interface {
 // Option 是 Limiter 的可选配置项。
 type Option func(*options)
 
-// options 汇总全部可选配置。
 type options struct {
 	keyPrefix    string
 	burst        int64
@@ -96,7 +95,7 @@ func WithBurst(n int64) Option {
 	return func(o *options) { o.burst = n }
 }
 
-// withInstanceName 是仅供包内使用的 Option，将 Registry 实例名透传给 perKeyLimiter
+// withInstanceName 仅供包内使用，将 Registry 实例名透传给 perKeyLimiter
 // 以便在 OTel span 中记录 ratelimit.name attribute。
 func withInstanceName(name string) Option {
 	return func(o *options) { o.instanceName = name }
@@ -145,11 +144,11 @@ func newPerKeyLimiter(algo, name string, factory func(key string) internalLimite
 // 未配置 TracerProvider 时全局默认为 noop tracer，几乎零开销。
 //
 // Span attributes：
-//   - ratelimit.key         — 被检查的 key
-//   - ratelimit.algo        — 限流算法
-//   - ratelimit.name        — Registry 实例名（仅通过 NewFromConfig 创建时存在）
-//   - ratelimit.allowed     — 是否放行（true/false）
-//   - ratelimit.retry_after_ms — 被限流时的建议等待毫秒数
+//   - ratelimit.key             — 被检查的 key
+//   - ratelimit.algo            — 限流算法
+//   - ratelimit.name            — Registry 实例名（仅通过 NewFromConfig 创建时存在）
+//   - ratelimit.allowed         — 是否放行（true/false）
+//   - ratelimit.retry_after_ms  — 被限流时的建议等待毫秒数
 func (l *perKeyLimiter) Limit(ctx context.Context, key string) (time.Duration, error) {
 	attrs := []attribute.KeyValue{
 		attribute.String("ratelimit.key", key),
@@ -248,7 +247,7 @@ func NewTokenBucketRedis(client *goredis.Client, rate int64, window time.Duratio
 		rKey := o.keyPrefix + key
 		lockKey := o.keyPrefix + key + ":lock"
 
-		// 存储 TTL：令牌桶填满所需时间的 10 倍，最少 1 分钟，确保状态不会提前过期
+		// 存储 TTL：令牌桶填满所需时间的 10 倍，最少 1 分钟，确保状态不会提前过期。
 		ttl := time.Duration(o.burst) * refillRate * 10
 		if ttl < time.Minute {
 			ttl = time.Minute
@@ -328,7 +327,6 @@ func NewFromConfig(cfg map[string]config.LimiterItemConfig, getRedis RedisGetter
 	return r, nil
 }
 
-// buildFromItem 根据单条配置项构建 Limiter。
 func buildFromItem(name string, item config.LimiterItemConfig, getRedis RedisGetter) (Limiter, error) {
 	if item.Rate <= 0 {
 		return nil, fmt.Errorf("climiter: %q: rate must be > 0", name)
@@ -342,12 +340,10 @@ func buildFromItem(name string, item config.LimiterItemConfig, getRedis RedisGet
 		algo = AlgoSlidingWindow
 	}
 
-	// local 算法不依赖 Redis
 	if algo == AlgoLocal {
 		return NewLocalSlidingWindow(item.Rate, item.Window, withInstanceName(name)), nil
 	}
 
-	// 其余算法需要 Redis
 	redisName := item.Redis
 	if redisName == "" {
 		redisName = "default"
