@@ -46,9 +46,15 @@ import (
 	redsyncgoredis "github.com/go-redsync/redsync/v4/redis/goredis/v9"
 	"github.com/mennanov/limiters"
 	goredis "github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/micoya/gocraft/config"
 )
+
+const tracerName = "climiter"
 
 // 支持的算法名称常量。
 const (
@@ -74,8 +80,9 @@ type Option func(*options)
 
 // options 汇总全部可选配置。
 type options struct {
-	keyPrefix string
-	burst     int64
+	keyPrefix    string
+	burst        int64
+	instanceName string // 由 Registry 内部设置，用于 OTel span attribute
 }
 
 // WithKeyPrefix 设置 Redis key 前缀，默认 "climiter:"。
@@ -87,6 +94,12 @@ func WithKeyPrefix(prefix string) Option {
 // 例如 WithBurst(10) 表示令牌桶最多可积累 10 个令牌，允许短时间内连续发出 10 个请求。
 func WithBurst(n int64) Option {
 	return func(o *options) { o.burst = n }
+}
+
+// withInstanceName 是仅供包内使用的 Option，将 Registry 实例名透传给 perKeyLimiter
+// 以便在 OTel span 中记录 ratelimit.name attribute。
+func withInstanceName(name string) Option {
+	return func(o *options) { o.instanceName = name }
 }
 
 func applyOptions(opts []Option) options {
@@ -115,16 +128,43 @@ type perKeyLimiter struct {
 	mu      sync.Mutex
 	entries map[string]internalLimiter
 	factory func(key string) internalLimiter
+	algo    string // 算法名，用于 OTel span attribute
+	name    string // Registry 实例名（可为空），用于 OTel span attribute
 }
 
-func newPerKeyLimiter(factory func(key string) internalLimiter) *perKeyLimiter {
+func newPerKeyLimiter(algo, name string, factory func(key string) internalLimiter) *perKeyLimiter {
 	return &perKeyLimiter{
+		algo:    algo,
+		name:    name,
 		entries: make(map[string]internalLimiter),
 		factory: factory,
 	}
 }
 
+// Limit 检查 key 是否被限流，并自动创建 OTel span 记录结果。
+// 未配置 TracerProvider 时全局默认为 noop tracer，几乎零开销。
+//
+// Span attributes：
+//   - ratelimit.key         — 被检查的 key
+//   - ratelimit.algo        — 限流算法
+//   - ratelimit.name        — Registry 实例名（仅通过 NewFromConfig 创建时存在）
+//   - ratelimit.allowed     — 是否放行（true/false）
+//   - ratelimit.retry_after_ms — 被限流时的建议等待毫秒数
 func (l *perKeyLimiter) Limit(ctx context.Context, key string) (time.Duration, error) {
+	attrs := []attribute.KeyValue{
+		attribute.String("ratelimit.key", key),
+		attribute.String("ratelimit.algo", l.algo),
+	}
+	if l.name != "" {
+		attrs = append(attrs, attribute.String("ratelimit.name", l.name))
+	}
+
+	ctx, span := otel.Tracer(tracerName).Start(ctx, "climiter.limit",
+		trace.WithSpanKind(trace.SpanKindInternal),
+		trace.WithAttributes(attrs...),
+	)
+	defer span.End()
+
 	l.mu.Lock()
 	b, ok := l.entries[key]
 	if !ok {
@@ -135,9 +175,19 @@ func (l *perKeyLimiter) Limit(ctx context.Context, key string) (time.Duration, e
 
 	w, err := b.Limit(ctx)
 	if errors.Is(err, limiters.ErrLimitExhausted) {
+		span.SetAttributes(
+			attribute.Bool("ratelimit.allowed", false),
+			attribute.Int64("ratelimit.retry_after_ms", w.Milliseconds()),
+		)
 		return w, ErrRateLimited
 	}
-	return w, err
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return w, err
+	}
+	span.SetAttributes(attribute.Bool("ratelimit.allowed", true))
+	return w, nil
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -152,7 +202,7 @@ func (l *perKeyLimiter) Limit(ctx context.Context, key string) (time.Duration, e
 // Redis 操作仅用 pipeline，性能好。
 func NewSlidingWindowRedis(client *goredis.Client, rate int64, window time.Duration, opts ...Option) Limiter {
 	o := applyOptions(opts)
-	return newPerKeyLimiter(func(key string) internalLimiter {
+	return newPerKeyLimiter(AlgoSlidingWindow, o.instanceName, func(key string) internalLimiter {
 		rKey := o.keyPrefix + key
 		return limiters.NewSlidingWindow(
 			rate, window,
@@ -171,7 +221,7 @@ func NewSlidingWindowRedis(client *goredis.Client, rate int64, window time.Durat
 // 缺点：窗口边界处可能在短时间内允许约 2x 的请求（两个相邻窗口各打满）。
 func NewFixedWindowRedis(client *goredis.Client, rate int64, window time.Duration, opts ...Option) Limiter {
 	o := applyOptions(opts)
-	return newPerKeyLimiter(func(key string) internalLimiter {
+	return newPerKeyLimiter(AlgoFixedWindow, o.instanceName, func(key string) internalLimiter {
 		rKey := o.keyPrefix + key
 		return limiters.NewFixedWindow(
 			rate, window,
@@ -194,7 +244,7 @@ func NewTokenBucketRedis(client *goredis.Client, rate int64, window time.Duratio
 	pool := redsyncgoredis.NewPool(client)
 	refillRate := window / time.Duration(rate)
 
-	return newPerKeyLimiter(func(key string) internalLimiter {
+	return newPerKeyLimiter(AlgoTokenBucket, o.instanceName, func(key string) internalLimiter {
 		rKey := o.keyPrefix + key
 		lockKey := o.keyPrefix + key + ":lock"
 
@@ -220,8 +270,9 @@ func NewTokenBucketRedis(client *goredis.Client, rate int64, window time.Duratio
 //
 // 适合单实例服务或开发 / 测试环境。
 // 注意：多副本部署时各实例独立计数，不共享状态，实际总放量 = rate × 副本数。
-func NewLocalSlidingWindow(rate int64, window time.Duration) Limiter {
-	return newPerKeyLimiter(func(_ string) internalLimiter {
+func NewLocalSlidingWindow(rate int64, window time.Duration, opts ...Option) Limiter {
+	o := applyOptions(opts)
+	return newPerKeyLimiter(AlgoLocal, o.instanceName, func(_ string) internalLimiter {
 		return limiters.NewSlidingWindow(
 			rate, window,
 			limiters.NewSlidingWindowInMemory(),
@@ -293,7 +344,7 @@ func buildFromItem(name string, item config.LimiterItemConfig, getRedis RedisGet
 
 	// local 算法不依赖 Redis
 	if algo == AlgoLocal {
-		return NewLocalSlidingWindow(item.Rate, item.Window), nil
+		return NewLocalSlidingWindow(item.Rate, item.Window, withInstanceName(name)), nil
 	}
 
 	// 其余算法需要 Redis
@@ -309,7 +360,7 @@ func buildFromItem(name string, item config.LimiterItemConfig, getRedis RedisGet
 		return nil, fmt.Errorf("climiter: %q: get redis %q: %w", name, redisName, err)
 	}
 
-	opts := []Option{}
+	opts := []Option{withInstanceName(name)}
 	if item.KeyPrefix != "" {
 		opts = append(opts, WithKeyPrefix(item.KeyPrefix))
 	}
