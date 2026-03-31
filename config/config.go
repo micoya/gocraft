@@ -265,6 +265,26 @@ type CronConfig struct {
 	LockTTL time.Duration `mapstructure:"lock_ttl"`
 }
 
+// LimiterItemConfig 单个限流器实例配置。
+type LimiterItemConfig struct {
+	// Algo 限流算法，可选值：
+	//   - sliding_window（推荐）：分布式滑动窗口，边界平滑，无需分布式锁
+	//   - fixed_window：分布式固定窗口，资源消耗最低
+	//   - token_bucket：分布式令牌桶，支持突发（配合 Burst 使用）
+	//   - local：单机内存滑动窗口，无需 Redis，适合单实例或测试环境
+	Algo string `mapstructure:"algo"`
+	// Rate 每 Window 时间内允许的最大请求数。
+	Rate int64 `mapstructure:"rate"`
+	// Window 时间窗口大小，如 1s、1m。
+	Window time.Duration `mapstructure:"window"`
+	// Burst 令牌桶突发容量，仅 token_bucket 算法生效，默认 1（严格按速率限流）。
+	Burst int64 `mapstructure:"burst"`
+	// KeyPrefix Redis key 前缀，默认 "climiter:"。
+	KeyPrefix string `mapstructure:"key_prefix"`
+	// Redis cdao 中 Redis 实例名，local 算法无需填写，其余算法默认 "default"。
+	Redis string `mapstructure:"redis"`
+}
+
 // DAOConfig 数据访问层配置
 type DAOConfig struct {
 	Database      map[string]DBConfig            `mapstructure:"database"`
@@ -288,8 +308,9 @@ type Config[T any] struct {
 	HTTPServer *HTTPServerConfig `mapstructure:"http_server"`
 	Otel       *OtelConfig       `mapstructure:"otel"`
 	DAO        *DAOConfig        `mapstructure:"dao"`
-	Cron       *CronConfig       `mapstructure:"cron"`
-	UID        *UIDConfig        `mapstructure:"uid"`
+	Cron       *CronConfig                  `mapstructure:"cron"`
+	UID        *UIDConfig                   `mapstructure:"uid"`
+	Limiter    map[string]LimiterItemConfig `mapstructure:"limiter"`
 	Temporal   *TemporalConfig   `mapstructure:"temporal"`
 	App        T                 `mapstructure:"app"`
 }
