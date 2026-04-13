@@ -310,3 +310,83 @@ func TestCORS(t *testing.T) {
 		t.Errorf("CORS Allow-Origin = %q, want https://example.com", origin)
 	}
 }
+
+func TestCORS_AllowOriginDomains(t *testing.T) {
+	cfg := &config.CORSConfig{
+		AllowOriginDomains: []string{"cli.im"},
+		AllowMethods:       []string{"GET"},
+	}
+
+	r := gin.New()
+	r.Use(CORS(cfg))
+	r.GET("/api", func(c *gin.Context) {
+		c.String(http.StatusOK, "ok")
+	})
+
+	tests := []struct {
+		name   string
+		origin string
+		want   string
+	}{
+		{"root http", "http://cli.im", "http://cli.im"},
+		{"root https", "https://cli.im", "https://cli.im"},
+		{"subdomain", "https://aaa.cli.im", "https://aaa.cli.im"},
+		{"subdomain with port", "https://aaa.cli.im:8988", "https://aaa.cli.im:8988"},
+		{"deep subdomain", "https://a.b.cli.im", "https://a.b.cli.im"},
+		{"root with port", "http://cli.im:3000", "http://cli.im:3000"},
+		{"not matching suffix", "https://evilcli.im", ""},
+		{"completely different", "https://other.com", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/api", nil)
+			req.Header.Set("Origin", tt.origin)
+			r.ServeHTTP(w, req)
+
+			got := w.Header().Get("Access-Control-Allow-Origin")
+			if got != tt.want {
+				t.Errorf("origin %q: Allow-Origin = %q, want %q", tt.origin, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCORS_AllowOriginDomainsWithAllowOrigins(t *testing.T) {
+	cfg := &config.CORSConfig{
+		AllowOrigins:       []string{"https://special.other.com"},
+		AllowOriginDomains: []string{"cli.im"},
+		AllowMethods:       []string{"GET"},
+	}
+
+	r := gin.New()
+	r.Use(CORS(cfg))
+	r.GET("/api", func(c *gin.Context) {
+		c.String(http.StatusOK, "ok")
+	})
+
+	tests := []struct {
+		name   string
+		origin string
+		want   string
+	}{
+		{"domain match", "https://app.cli.im", "https://app.cli.im"},
+		{"exact origin match", "https://special.other.com", "https://special.other.com"},
+		{"no match", "https://random.com", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/api", nil)
+			req.Header.Set("Origin", tt.origin)
+			r.ServeHTTP(w, req)
+
+			got := w.Header().Get("Access-Control-Allow-Origin")
+			if got != tt.want {
+				t.Errorf("origin %q: Allow-Origin = %q, want %q", tt.origin, got, tt.want)
+			}
+		})
+	}
+}

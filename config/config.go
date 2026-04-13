@@ -20,12 +20,13 @@ type LogConfig struct {
 
 // CORSConfig CORS 跨域配置，零值代表不启用
 type CORSConfig struct {
-	AllowAllOrigins  bool          `mapstructure:"allow_all_origins"`
-	AllowOrigins     []string      `mapstructure:"allow_origins"`
-	AllowMethods     []string      `mapstructure:"allow_methods"`
-	AllowHeaders     []string      `mapstructure:"allow_headers"`
-	AllowCredentials bool          `mapstructure:"allow_credentials"`
-	MaxAge           time.Duration `mapstructure:"max_age"`
+	AllowAllOrigins    bool          `mapstructure:"allow_all_origins"`
+	AllowOrigins       []string      `mapstructure:"allow_origins"`
+	AllowOriginDomains []string      `mapstructure:"allow_origin_domains"`
+	AllowMethods       []string      `mapstructure:"allow_methods"`
+	AllowHeaders       []string      `mapstructure:"allow_headers"`
+	AllowCredentials   bool          `mapstructure:"allow_credentials"`
+	MaxAge             time.Duration `mapstructure:"max_age"`
 }
 
 // AccessLogConfig 访问日志配置
