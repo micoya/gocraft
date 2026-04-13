@@ -2,6 +2,10 @@ package cpager
 
 import (
 	"testing"
+
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 // --- New() 参数归一化 ---
@@ -146,5 +150,106 @@ func TestHasNextHasPrev(t *testing.T) {
 	r3 := &Result[int]{Page: 3, PageSize: 10, Total: 25, TotalPages: 3, HasNext: false, HasPrev: true}
 	if r3.HasNext || !r3.HasPrev {
 		t.Errorf("page=3 of 3: HasNext=%v HasPrev=%v", r3.HasNext, r3.HasPrev)
+	}
+}
+
+// --- Paginate 集成测试（SQLite） ---
+
+type testItem struct {
+	ID     uint   `gorm:"primaryKey"`
+	Name   string `gorm:"size:64"`
+	Status int
+}
+
+func setupTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
+		Logger: logger.Discard,
+	})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := db.AutoMigrate(&testItem{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	return db
+}
+
+func seedItems(t *testing.T, db *gorm.DB, n int) {
+	t.Helper()
+	items := make([]testItem, n)
+	for i := range items {
+		items[i] = testItem{Name: "item", Status: i%2 + 1}
+	}
+	if err := db.Create(&items).Error; err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+}
+
+func TestPaginate_WithModelAndWhere(t *testing.T) {
+	db := setupTestDB(t)
+	seedItems(t, db, 15) // status=1: 8 条, status=2: 7 条
+
+	query := db.Model(&testItem{}).Where("status = ?", 1)
+	page := Of(1, 5)
+
+	result, err := Paginate[testItem](query, page)
+	if err != nil {
+		t.Fatalf("Paginate: %v", err)
+	}
+	if result.Total != 8 {
+		t.Errorf("Total = %d, want 8", result.Total)
+	}
+	if len(result.Items) != 5 {
+		t.Errorf("Items len = %d, want 5", len(result.Items))
+	}
+	if !result.HasNext {
+		t.Error("HasNext should be true")
+	}
+	if result.HasPrev {
+		t.Error("HasPrev should be false")
+	}
+}
+
+func TestPaginate_SecondPage(t *testing.T) {
+	db := setupTestDB(t)
+	seedItems(t, db, 15)
+
+	query := db.Model(&testItem{}).Where("status = ?", 1)
+	page := Of(2, 5)
+
+	result, err := Paginate[testItem](query, page)
+	if err != nil {
+		t.Fatalf("Paginate: %v", err)
+	}
+	if result.Total != 8 {
+		t.Errorf("Total = %d, want 8", result.Total)
+	}
+	if len(result.Items) != 3 {
+		t.Errorf("Items len = %d, want 3", len(result.Items))
+	}
+	if result.HasNext {
+		t.Error("HasNext should be false")
+	}
+	if !result.HasPrev {
+		t.Error("HasPrev should be true")
+	}
+}
+
+func TestPaginate_EmptyResult(t *testing.T) {
+	db := setupTestDB(t)
+
+	query := db.Model(&testItem{}).Where("status = ?", 999)
+	page := Of(1, 10)
+
+	result, err := Paginate[testItem](query, page)
+	if err != nil {
+		t.Fatalf("Paginate: %v", err)
+	}
+	if result.Total != 0 {
+		t.Errorf("Total = %d, want 0", result.Total)
+	}
+	if len(result.Items) != 0 {
+		t.Errorf("Items len = %d, want 0", len(result.Items))
 	}
 }

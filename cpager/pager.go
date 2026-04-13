@@ -102,8 +102,8 @@ type Result[T any] struct {
 func Paginate[T any](db *gorm.DB, page Page) (*Result[T], error) {
 	var total int64
 
-	// 使用新 session 避免 Count 修改原有 query 的 select 子句
-	if err := db.Session(&gorm.Session{NewDB: true}).Count(&total).Error; err != nil {
+	// 克隆 session 避免 Count 的 SELECT COUNT(*) 改写影响后续 Find
+	if err := db.Session(&gorm.Session{}).Count(&total).Error; err != nil {
 		return nil, fmt.Errorf("cpager: count: %w", err)
 	}
 
