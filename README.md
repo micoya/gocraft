@@ -34,6 +34,7 @@
 | **cpubsub** | 发布/订阅抽象（发布、消费组式订阅）；实现位于子包 **Redis / Kafka / RabbitMQ**。 |
 | **ctemporal** | Temporal 客户端与 Worker 的**胶水封装**：配置驱动连接、TLS、slog、多 Worker 注册与统一 `Run`；业务 Workflow/Activity 仍用官方 SDK 原生写法。 |
 | **cworker** | 带并发上限的后台任务池：信号量控并发、panic 恢复、`Stop` 等待在途任务结束。 |
+| **climiter** | 限流器：**滑动窗口**（推荐）、**固定窗口**、**令牌桶**（Redis 分布式）、**本地内存**；支持配置驱动多实例 Registry、per-key 限流、OTel span 自动埋点。 |
 | **cuid** | 分布式 ID：**UUID v4**、**Snowflake**（静态节点或基于 Redis 租约的动态节点）、**Sonyflake**（默认结合本机私网 IPv4 派生机器号）。 |
 
 ---
@@ -52,6 +53,8 @@
 - **oss**（阿里云 OSS）— `cdao/ossx`
 - **openai**（官方 Go SDK 客户端）— `cdao/openaix`
 - **mcache**（Ristretto 本地缓存）— `cdao/mcachex`
+- **mns**（阿里云消息服务 MNS）— `cdao/mnsx`
+- **tablestore**（阿里云表格存储 OTS）— `cdao/tablestorex`，内置 OTel 插桩
 
 多数与外部服务相关的 provider 提供 **OpenTelemetry 插桩**子包，便于与 `cotel` / `chttp` 串联。
 
@@ -62,7 +65,7 @@
 1. **config** → **clog** → **cotel**：配置、日志与观测打底。  
 2. **cdao** + 需要的 **provider** + 对应 `*x` 辅助包：接好数据与中间件。  
 3. **chttp** 或 **cfx**：手写组装用前者，依赖注入与生命周期用后者。  
-4. 按业务需要叠加 **ccache**、**clocker**、**ccron**、**cpubsub**、**ctemporal**、**cworker**、**cuid**、**cpager**、**cerror**。
+4. 按业务需要叠加 **ccache**、**clocker**、**ccron**、**cpubsub**、**ctemporal**、**cworker**、**cuid**、**climiter**、**cpager**、**cerror**。
 
 各包顶部的 **package 注释**与 `_test.go` 即最贴近代码的用法说明；细节以源码为准。
 
