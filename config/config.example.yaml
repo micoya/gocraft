@@ -127,7 +127,7 @@ http_server:
 # ============================================================
 # 数据访问层（cdao）
 # database / redis / oss / openai / mcache / http_client /
-# rabbitmq / kafka / elasticsearch / mongo 均支持多实例，key 为自定义连接名称。
+# rabbitmq / kafka / elasticsearch / mongo / tablestore / mns 均支持多实例，key 为自定义连接名称。
 # 各 Must() 省略 name 时默认取名为 "default" 的实例。
 # 使用某类资源前须在代码中 blank import 对应 cdao/provider/... 完成注册。
 # 整个 dao 块不填（或注释掉）表示不在配置中声明数据源。
@@ -252,6 +252,31 @@ http_server:
 #     # rs:
 #     #   uri: "mongodb://user:pass@mongo1:27017,mongo2:27017,mongo3:27017/mydb?replicaSet=rs0&authSource=admin"
 #     #   connect_timeout: 10s
+#
+#   tablestore:
+#     default:
+#       # 实例访问地址，从表格存储控制台"实例详情"获取
+#       endpoint: "https://instance-name.cn-hangzhou.ots.aliyuncs.com"
+#       # 实例名称
+#       instance_name: "instance-name"
+#       access_key_id: "your-access-key-id"
+#       access_key_secret: "your-access-key-secret"
+#     # analytics:
+#     #   endpoint: "https://analytics-instance.cn-shanghai.ots.aliyuncs.com"
+#     #   instance_name: "analytics-instance"
+#     #   access_key_id: "your-access-key-id"
+#     #   access_key_secret: "your-access-key-secret"
+#
+#   mns:
+#     default:
+#       # MNS 接入地址，从消息服务控制台"队列列表"页获取
+#       endpoint: "http://1234567890123456.mns.cn-hangzhou.aliyuncs.com"
+#       access_key_id: "your-access-key-id"
+#       access_key_secret: "your-access-key-secret"
+#     # events:
+#     #   endpoint: "http://1234567890123456.mns.cn-shanghai.aliyuncs.com"
+#     #   access_key_id: "your-access-key-id"
+#     #   access_key_secret: "your-access-key-secret"
 
 # ============================================================
 # 定时任务（ccron）

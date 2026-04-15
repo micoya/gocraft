@@ -77,6 +77,16 @@ func NewFromConfig(cfg *config.DAOConfig) (*DAO, error) {
 			return nil, err
 		}
 	}
+	for name, c := range cfg.TableStore {
+		if err := d.add("tablestore", name, c); err != nil {
+			return nil, err
+		}
+	}
+	for name, c := range cfg.MNS {
+		if err := d.add("mns", name, c); err != nil {
+			return nil, err
+		}
+	}
 
 	return d, nil
 }

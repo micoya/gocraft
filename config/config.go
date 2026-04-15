@@ -137,6 +137,21 @@ type MongoConfig struct {
 	ConnectTimeout time.Duration `mapstructure:"connect_timeout"` // 连接超时，默认 10s
 }
 
+// TableStoreConfig 单个阿里云表格存储（Tablestore）连接配置
+type TableStoreConfig struct {
+	Endpoint        string `mapstructure:"endpoint"`          // 实例访问地址，如 https://instance-name.cn-hangzhou.ots.aliyuncs.com
+	InstanceName    string `mapstructure:"instance_name"`     // 实例名称
+	AccessKeyID     string `mapstructure:"access_key_id"`     // 阿里云 AccessKey ID
+	AccessKeySecret string `mapstructure:"access_key_secret"` // 阿里云 AccessKey Secret
+}
+
+// MNSConfig 单个阿里云消息服务（MNS）连接配置
+type MNSConfig struct {
+	Endpoint        string `mapstructure:"endpoint"`          // MNS 接入地址，如 http://1234567890123456.mns.cn-hangzhou.aliyuncs.com
+	AccessKeyID     string `mapstructure:"access_key_id"`     // 阿里云 AccessKey ID
+	AccessKeySecret string `mapstructure:"access_key_secret"` // 阿里云 AccessKey Secret
+}
+
 // RetryConfig HTTP 客户端重试配置。
 type RetryConfig struct {
 	// MaxAttempts 最大重试次数（不含首次请求），默认 3。
@@ -298,6 +313,8 @@ type DAOConfig struct {
 	Kafka         map[string]KafkaConfig         `mapstructure:"kafka"`
 	Elasticsearch map[string]ElasticsearchConfig `mapstructure:"elasticsearch"`
 	Mongo         map[string]MongoConfig         `mapstructure:"mongo"`
+	TableStore    map[string]TableStoreConfig    `mapstructure:"tablestore"`
+	MNS           map[string]MNSConfig           `mapstructure:"mns"`
 }
 
 // Config 应用总配置。T 为各业务自定义的扩展配置，对应配置文件中的 app 块。
